@@ -1,61 +1,43 @@
 # wwz-switch-lab
 
-**Lab only** — not a playable World War Z private server.
+**Lab only** — TLS terminator + traffic logger for World War Z Switch online API.
 
-Redirects the CFW Switch to your PC and logs bytes on **TCP 11702 / 11704**.
+Not a playable private server.
 
-## Fixed lab network (your setup)
+## Your network
 
 | Device | IP |
 |--------|-----|
-| **PC (ICS gateway)** | **`192.168.137.1`** |
-| Switch | `192.168.137.x` (e.g. `.122`, `.141`) |
+| PC (ICS) | **192.168.137.1** |
+| Switch | 192.168.137.x |
 
-Hosts file already uses **`192.168.137.1`** — no need to edit IPs unless your network changes.
+## What we learned from your capture
 
-| Host | Official (blocked by hosts) | Lab target |
-|------|-----------------------------|------------|
-| `wwz.wwzapi.com` | `51.124.204.22` | `192.168.137.1` |
-| `wwz-production.wwzapi.com` | same | `192.168.137.1` |
-| Ports | **11702**, **11704** | same on PC |
+- Switch connects to **TCP 11702** with **TLS**
+- SNI = **`wwz.wwzapi.com`**
+- ALPN = `http/1.1` and `h2`
 
-Stack: **Saber/Redlynx Hydra** (not NEX).
+This build **completes the TLS handshake** with a lab certificate and logs **decrypted** bytes (and HTTP headers if the client sends them).
+
+If the Switch **pins** Saber’s real certificate, handshake will fail — that result is still useful.
 
 ---
 
-## Step 1 — PC: run the lab server
+## Setup (once)
 
 ```powershell
-cd $env:USERPROFILE\Desktop
-git clone https://github.com/AJstylishhh/wwz-switch-lab.git
-cd wwz-switch-lab
+cd "C:\Users\Asif Ali IBS\OneDrive\Desktop\wwz-switch-lab"
+git pull
 
-# Admin PowerShell once — firewall
-New-NetFirewallRule -DisplayName "WWZ Lab 11702" -Direction Inbound -Protocol TCP -LocalPort 11702 -Action Allow
-New-NetFirewallRule -DisplayName "WWZ Lab 11704" -Direction Inbound -Protocol TCP -LocalPort 11704 -Action Allow
-
-python server.py
+# Create certs for wwz.wwzapi.com
+.\gen_certs.ps1
 ```
 
-Or: `.\run.ps1`
+If OpenSSL is installed (you used it for Dying Light), `gen_certs.ps1` writes both `certs\server.crt` and `certs\server.key`.
 
-Expected:
+Allow Python through the firewall (or turn Private firewall off only while testing).
 
-```text
-[WWZ Lab] listening TCP 0.0.0.0:11702
-[WWZ Lab] listening TCP 0.0.0.0:11704
-[WWZ Lab] waiting for Switch…
-```
-
-Need Python 3 + **Add to PATH**. Logs go to `logs/`.
-
-Keep **ICS / the 192.168.137.x link** up so the Switch can reach `192.168.137.1`.
-
----
-
-## Step 2 — Switch: hosts (copy-paste)
-
-Edit `atmosphere/hosts/emummc.txt` **or** `sysmmc.txt`:
+### Switch hosts
 
 ```text
 192.168.137.1  wwz.wwzapi.com
@@ -65,35 +47,40 @@ Edit `atmosphere/hosts/emummc.txt` **or** `sysmmc.txt`:
 192.168.137.1  rlxp1a1l.hydrapi.net
 ```
 
-Same content is in `hosts-snippet.txt`.
+---
 
-`atmosphere/config/system_settings.ini`:
+## Run
 
-```text
-[atmosphere]
-enable_dns_mitm = u8!0x1
+```powershell
+cd "C:\Users\Asif Ali IBS\OneDrive\Desktop\wwz-switch-lab"
+py server.py
 ```
 
-**Full power off**, then on.
+Expected:
+
+```text
+[WWZ Lab] TLS listening 0.0.0.0:11702
+[WWZ Lab] TLS listening 0.0.0.0:11704
+```
+
+Then open WWZ online on the Switch.
+
+### Good signs
+
+- `TLS OK peer=192.168.137.x`
+- Decrypted data / `--- HTTP head ---`
+
+### If you see `TLS handshake FAILED`
+
+Likely **certificate pinning**. Paste the error line; lab still documented the protocol as TLS+HTTPS-style API.
 
 ---
 
-## Step 3 — Test
+## Files
 
-1. `python server.py` running on PC  
-2. WWZ → **online** co-op / matchmaking  
-3. PC should show `CONNECT from 192.168.137.x` + hex  
-
-Paste those lines (or a `logs/*.log` file).
-
-| Log clue | Next step |
-|----------|-----------|
-| Starts with `16 03` | Likely TLS |
-| Other binary | Custom framing |
-| No CONNECT | ICS down, wrong hosts file (emu vs sys), or firewall |
-
----
-
-## Scope
-
-Accept + log only. Not matchmaking or missions. CFW DNS mitm keeps traffic on your LAN lab, not official servers.
+| File | Role |
+|------|------|
+| `server.py` | TLS listen + decrypt log |
+| `gen_certs.ps1` | Lab cert for `wwz.wwzapi.com` |
+| `hosts-snippet.txt` | Atmosphere hosts |
+| `logs/` | Saved sessions |
