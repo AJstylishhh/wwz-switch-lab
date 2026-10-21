@@ -1,0 +1,15 @@
+# Atmosphere DNS mitm hosts snippet for WWZ lab
+# File: atmosphere/hosts/emummc.txt  OR  atmosphere/hosts/sysmmc.txt
+#
+# Replace YOUR_PC_IP with the PC running server.py
+# Example ICS: 192.168.137.1
+# Example home Wi-Fi: 192.168.1.106
+#
+# enable_dns_mitm = u8!0x1  in atmosphere/config/system_settings.ini
+# Then full power-off reboot of the Switch.
+
+YOUR_PC_IP  wwz.wwzapi.com
+YOUR_PC_IP  wwz-production.wwzapi.com
+YOUR_PC_IP  wwzprod.wwzapi.com
+YOUR_PC_IP  rlx.hydrapi.net
+YOUR_PC_IP  rlxp1a1l.hydrapi.net
