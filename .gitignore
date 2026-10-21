@@ -1,6 +1,7 @@
 logs/
 captures/
 certs/
+generated-descriptors/
 *.pcapng
 *.pcap
 *.key
