@@ -1,4 +1,11 @@
 logs/
+captures/
+certs/
+*.pcapng
+*.pcap
+*.key
+*.pfx
 *.pyc
 __pycache__/
 .venv/
+.pytest_cache/

@@ -1,0 +1,10 @@
+{
+  "c928398a5e4b4debb4099f62383eb196.svc/44829c126af14aeb9f535e504fa413ee": {
+    "handler": "environment_list",
+    "address": "192.168.137.1",
+    "port": 11704,
+    "name": "wwz-production.wwzapi.com",
+    "environment_id": "Retail",
+    "region": "local"
+  }
+}
