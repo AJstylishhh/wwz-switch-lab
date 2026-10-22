@@ -102,6 +102,7 @@ class PostLogin:
                         {"stage": kind, "tokens": len(tokens)})
             if kind == "diagnostics_ack":
                 self.diagnostic_packs += 1
-                # Explicit experiment: discard telemetry, return only success.
-                return wire.result(), {"stage": kind, "discarded_packs": self.diagnostic_packs}
+                # The handler discards telemetry. The optional global --capture-dir
+                # still stores raw requests on the test PC when explicitly enabled.
+                return wire.result(), {"stage": kind, "acknowledged_packs": self.diagnostic_packs}
         raise AssertionError("Unreachable")
