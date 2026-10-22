@@ -29,7 +29,7 @@ def string(field, value):
     return blob(field, value.encode("utf-8"))
 
 
-def environment_result(address, port, name, environment_id, region):
+def environment_result(address, port, name, environment_id, region, datacenter_id=None):
     """ServiceResult<ServiceResult_EnvironmentList<EnvironmentList>>.
 
     Only shape and field numbers are confirmed; endpoint values are hypotheses.
@@ -41,8 +41,19 @@ def environment_result(address, port, name, environment_id, region):
         raise ValueError("environment values must be nonempty strings")
     # CompactEndpointInfo: Name, IP, Port, Protocols_HTTPS=1, IsDefault.
     endpoint = string(1, name) + string(2, address) + scalar(3, port) + scalar(4, 1) + scalar(5, 1)
-    # EnvironmentInfo: Endpoint, EnvironmentId, Region, IsUnderMaintenance.
-    env = blob(1, endpoint) + string(2, environment_id) + string(3, region) + scalar(6, 0)
+    # EnvironmentInfo: Endpoint=1, EnvironmentId=2, Region=3,
+    # DataCenters=5 (repeated), IsUnderMaintenance=6.
+    env = blob(1, endpoint) + string(2, environment_id) + string(3, region)
+    if datacenter_id is not None:
+        if not isinstance(datacenter_id, str) or not datacenter_id:
+            raise ValueError("datacenter_id must be a nonempty string")
+        # DataCenterInfo: DataCenterId=1, Occupation=2 (0),
+        # HideWhenNotAvailable=3 (false), Endpoints=4.
+        # This is a *mock* datacenter, not an actual WWZ matchmaking server.
+        dc = (string(1, datacenter_id) + scalar(2, 0) + scalar(3, 0) +
+              blob(4, endpoint))
+        env += blob(5, dc)
+    env += scalar(6, 0)
     # EnvironmentList.Environments=1; ServiceResult_EnvironmentList.data=1
     wrapped = blob(1, blob(1, env))
     return scalar(1, 0) + blob(ENVIRONMENT_RESULT_FIELD, wrapped)
