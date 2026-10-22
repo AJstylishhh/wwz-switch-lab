@@ -54,13 +54,25 @@ def positions(data: bytes):
     return found
 
 
+def close_hits(left, right):
+    """Linear two-pointer proximity check for bounded, sorted offsets."""
+    i = j = 0
+    while i < len(left) and j < len(right):
+        if abs(left[i] - right[j]) <= NEARBY:
+            return True
+        if left[i] < right[j]:
+            i += 1
+        else:
+            j += 1
+    return False
+
+
 def safe_part_summary(data: bytes):
     hits = positions(data)
     near = []
     for a, b in PAIRS:
-        if a in hits and b in hits:
-            if any(abs(x - y) <= NEARBY for x in hits[a] for y in hits[b]):
-                near.append(a + "+" + b)
+        if a in hits and b in hits and close_hits(hits[a], hits[b]):
+            near.append(a + "+" + b)
     first = min((p for entries in hits.values() for p in entries), default=None)
     region = None if first is None else (
         "first_third" if 3 * first < len(data) else
