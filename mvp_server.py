@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment_request
 from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
+from auth_dequeue import DEQUEUE_ROUTE, AuthSessions
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -51,6 +52,12 @@ def read_routes(config_path: Path):
                                           conf["environment_id"], conf["region"])
             elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
                 data = None  # Generate a short-lived queue token for each request.
+            elif route == DEQUEUE_ROUTE and conf["handler"] == "dequeue":
+                data = {"address": conf["address"], "port": int(conf["port"]), "name": conf["name"]}
+                if (not isinstance(data["address"], str) or not data["address"] or
+                        not isinstance(data["name"], str) or not data["name"] or
+                        not 1 <= data["port"] <= 65535):
+                    raise ValueError("invalid Dequeue endpoint")
             else:
                 raise ValueError("unsupported handler")
         elif "response_hex" in conf:
@@ -65,6 +72,7 @@ class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.queue = QueueState()
+        self.auth_sessions = AuthSessions(self.queue)
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -135,6 +143,14 @@ def make_handler(app):
                     LOG.warning("Enqueue payload rejected: %s", exc)
                     return self.reply(400, b"Invalid Enqueue payload", "text/plain")
                 LOG.info("Experimental Enqueue reply: 200 state=ReadyToDequeue %s", metadata)
+                return self.reply(answer[0], data)
+            if path == DEQUEUE_ROUTE and isinstance(answer[1], dict):
+                try:
+                    data, info = app.auth_sessions.respond(raw, **answer[1])
+                except ValueError as exc:
+                    LOG.warning("Dequeue rejected: %s", exc)
+                    return self.reply(400, b"Invalid queue token or Dequeue request", "text/plain")
+                LOG.info("Experimental Dequeue/SignInResult reply: %s", info)
                 return self.reply(answer[0], data)
             self.reply(*answer)
     return Handler
