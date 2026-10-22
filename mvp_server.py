@@ -19,6 +19,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment_request
+from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -45,10 +46,13 @@ def read_routes(config_path: Path):
         if not 100 <= status <= 599:
             raise ValueError("invalid HTTP status")
         if "handler" in conf:
-            if route != ENVIRONMENT_ROUTE or conf["handler"] != "environment_list":
+            if route == ENVIRONMENT_ROUTE and conf["handler"] == "environment_list":
+                data = environment_result(conf["address"], conf["port"], conf["name"],
+                                          conf["environment_id"], conf["region"])
+            elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
+                data = None  # Generate a short-lived queue token for each request.
+            else:
                 raise ValueError("unsupported handler")
-            data = environment_result(conf["address"], conf["port"], conf["name"],
-                                      conf["environment_id"], conf["region"])
         elif "response_hex" in conf:
             data = bytes.fromhex(conf["response_hex"])
         else:
@@ -60,6 +64,7 @@ def read_routes(config_path: Path):
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
+        self.queue = QueueState()
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -122,6 +127,15 @@ def make_handler(app):
             if answer is None:
                 LOG.warning("Unmapped RPC: %s", path)
                 return self.reply(404, b"Unknown RPC", "text/plain")
+            if path == ENQUEUE_ROUTE and answer[1] is None:
+                try:
+                    metadata = inspect_enqueue(raw)
+                    data = app.queue.issue(raw)
+                except ValueError as exc:
+                    LOG.warning("Enqueue payload rejected: %s", exc)
+                    return self.reply(400, b"Invalid Enqueue payload", "text/plain")
+                LOG.info("Experimental Enqueue reply: 200 state=ReadyToDequeue %s", metadata)
+                return self.reply(answer[0], data)
             self.reply(*answer)
     return Handler
 

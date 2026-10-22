@@ -6,5 +6,8 @@
     "name": "wwz-production.wwzapi.com",
     "environment_id": "Retail",
     "region": "local"
+  },
+  "0ae806e0260340fe86eb38ff8708252f.svc/3ad39ec0971940b98e522d40229704b9": {
+    "handler": "enqueue"
   }
 }
