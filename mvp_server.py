@@ -50,7 +50,8 @@ def read_routes(config_path: Path):
         if "handler" in conf:
             if route == ENVIRONMENT_ROUTE and conf["handler"] == "environment_list":
                 data = environment_result(conf["address"], conf["port"], conf["name"],
-                                          conf["environment_id"], conf["region"])
+                                          conf["environment_id"], conf["region"],
+                                          datacenter_id=conf.get("datacenter_id"))
             elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
                 data = None  # Generate a short-lived queue token for each request.
             elif route == DEQUEUE_ROUTE and conf["handler"] == "dequeue":
