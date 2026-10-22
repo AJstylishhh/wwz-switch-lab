@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment_request
 from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
 from auth_dequeue import DEQUEUE_ROUTE, AuthSessions
+from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -58,6 +59,8 @@ def read_routes(config_path: Path):
                         not isinstance(data["name"], str) or not data["name"] or
                         not 1 <= data["port"] <= 65535):
                     raise ValueError("invalid Dequeue endpoint")
+            elif route in POST_LOGIN_ROUTES and conf["handler"] == POST_LOGIN_ROUTES[route]:
+                data = {"post_login_handler": conf["handler"]}
             else:
                 raise ValueError("unsupported handler")
         elif "response_hex" in conf:
@@ -73,6 +76,7 @@ class App:
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.queue = QueueState()
         self.auth_sessions = AuthSessions(self.queue)
+        self.post_login = PostLogin(self.auth_sessions)
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -151,6 +155,14 @@ def make_handler(app):
                     LOG.warning("Dequeue rejected: %s", exc)
                     return self.reply(400, b"Invalid queue token or Dequeue request", "text/plain")
                 LOG.info("Experimental Dequeue/SignInResult reply: %s", info)
+                return self.reply(answer[0], data)
+            if path in POST_LOGIN_ROUTES and isinstance(answer[1], dict):
+                try:
+                    data, info = app.post_login.respond(path, raw)
+                except ValueError as exc:
+                    LOG.warning("Experimental post-login request rejected on %s: %s", path, exc)
+                    return self.reply(400, b"Invalid experimental RPC", "text/plain")
+                LOG.info("Experimental post-login reply: %s", info)
                 return self.reply(answer[0], data)
             self.reply(*answer)
     return Handler
