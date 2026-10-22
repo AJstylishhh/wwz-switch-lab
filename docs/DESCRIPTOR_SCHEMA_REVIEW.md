@@ -30,3 +30,29 @@ Test the original server first as a baseline, then the alternative config in a s
 ## Privacy and source limitations
 
 Reconstructed field numbers and message types are exact to the game's embedded FileDescriptorProto. Request-GUID/method mapping and request-to-response type mapping are independent inferences (the descriptor has no service definitions), so they must be confirmed via behavior or static dispatcher analysis. Generated schema fields are not credentials, but no game binary or raw authentication traffic is published here.
+
+## October 22 follow-up: the data-center variant is not an isolated A/B yet
+
+The 20:46 and 20:47 lab runs using `routes.datacenter.example.json` still
+progressed through the known login/post-login calls, then issued
+`IUserHeartbeatService_UnRegister`, two zero-byte candidate cleanup RPCs,
+and restarted environment discovery. The visible main-menu failure persists.
+
+**Comparison caveat:** the earlier 19:31 run came from an independently
+modified, ZIP-extracted Python server (the tests included `test_risk_fixes`
+and `test_catch_all`). Its Dequeue logs contain extra fields including
+`echoed_credentials=True`; the Git research branch Dequeue logs do not.
+Therefore this is NOT a controlled A/B of DataCenters alone. For an isolated
+comparison, run the default routes and the optional data-center routes from
+the SAME Git checkout with identical certificates and other settings.
+
+The two empty calls happen *after* heartbeat unregister in both traces. We
+still have no evidence that responding to cleanup calls with HTTP 200 would
+prevent the earlier rejection; their GUID mappings and method-specific reply
+semantics have not been proven.
+
+The descriptor also confirms the mock heartbeat response currently carries
+an empty `UserVersions` submessage; its `Versions=1` field is repeated
+`int64`, not a string. `SignInResult.ProviderInfo=10` is absent, with
+`ProviderOptionalInfo.HasSubscription` defaulting to false if read as absent.
+Neither is established as the proximate cause of failure.
