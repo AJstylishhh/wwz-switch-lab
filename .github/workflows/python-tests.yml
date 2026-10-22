@@ -1,0 +1,24 @@
+name: Python research tests
+
+on:
+  push:
+    branches:
+      - research/chatgpt-hydra-server-mvp
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run loopback and protobuf tests
+        run: python -m unittest discover -s tests -v
