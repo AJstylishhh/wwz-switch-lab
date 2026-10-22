@@ -53,6 +53,18 @@ def shape(raw: bytes):
             for n, w, v in fields(raw)]
 
 
+PUBLIC_BUILD_VERSION = b"0.1.DEV.8802288/PREBUILD"
+
+
+def is_public_build_version(raw: bytes):
+    """Check equality against known non-sensitive game build string only."""
+    try:
+        return any(n == 1 and w == 2 and v == PUBLIC_BUILD_VERSION
+                   for n, w, v in fields(raw))
+    except ValueError:
+        return False
+
+
 def candidates(items: list[dict], limit: int = 8):
     observed = {item["number"]: item["wire_type"] for item in items}
     matches = []
@@ -88,15 +100,16 @@ def analyze(capture_dir: Path, routes_file: Path | None = None, include_known=Fa
             field_shape = shape(data)
         except (ValueError, OSError, UnicodeError):
             continue
-        grouped[path].append((metadata.name, len(data), field_shape))
+        grouped[path].append((metadata.name, len(data), field_shape, is_public_build_version(data)))
     result = []
     for path, events in sorted(grouped.items()):
         variants = {}
-        for filename, length, items in events:
+        for filename, length, items, version_match in events:
             signature = (length, tuple((f["number"], f["wire_type"], f["byte_length"]) for f in items))
             if signature not in variants:
                 variants[signature] = {"request_bytes": length, "fields": items,
-                                       "count": 0, "candidates": candidates(items)}
+                                       "count": 0, "matches_public_build_version": version_match,
+                                       "candidates": candidates(items)}
             variants[signature]["count"] += 1
         result.append({"path": path, "observations": len(events),
                        "variants": sorted(variants.values(), key=lambda item: item["request_bytes"])})
