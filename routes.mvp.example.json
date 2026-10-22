@@ -9,5 +9,11 @@
   },
   "0ae806e0260340fe86eb38ff8708252f.svc/3ad39ec0971940b98e522d40229704b9": {
     "handler": "enqueue"
+  },
+  "0ae806e0260340fe86eb38ff8708252f.svc/c4504538d0ca4b2fb2a9e87f0091f97e": {
+    "handler": "dequeue",
+    "address": "192.168.137.1",
+    "port": 11704,
+    "name": "wwz-production.wwzapi.com"
   }
 }
