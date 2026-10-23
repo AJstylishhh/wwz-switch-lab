@@ -177,7 +177,15 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     def get_request(self):
-        sock, addr = super().get_request()
+        try:
+            sock, addr = super().get_request()
+        except ssl.SSLError as exc:
+            # TLS-wrapped listening sockets handshake during accept().
+            # Report only local port / SSL failure class, never remote IP,
+            # raw request data or private hostname.
+            LOG.warning("TLS handshake failed port=%s reason=%s",
+                        self.server_port, getattr(exc, "reason", "unknown"))
+            raise
         sock.settimeout(30)
         return sock, addr
 
