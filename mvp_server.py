@@ -6,6 +6,8 @@ Python 3.10+ standard library. The original server.py capture logger is unchange
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -13,6 +15,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import secrets
 import ssl
 import threading
 import uuid
@@ -115,8 +118,13 @@ def read_routes(config_path: Path):
 
 
 class App:
-    def __init__(self, routes, capture_dir=None, max_body=2_000_000):
+    def __init__(self, routes, capture_dir=None, max_body=2_000_000,
+                 trace_clients=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
+        self.trace_clients = trace_clients
+        # Ephemeral random key: labels do not disclose client IPs or token
+        # contents, and cannot be linked across server restarts.
+        self._trace_key = secrets.token_bytes(32)
         self.queue = QueueState()
         self.auth_sessions = AuthSessions(self.queue)
         self.post_login = PostLogin(self.auth_sessions)
@@ -126,6 +134,26 @@ class App:
                 os.chmod(capture_dir, 0o700)
             except OSError:
                 pass
+
+
+    def observation_label(self, ip, headers):
+        if not self.trace_clients:
+            return ""
+        def tag(domain, value):
+            data = (domain + "\\0" + value).encode("utf-8")
+            return hmac.digest(self._trace_key, data, hashlib.sha256)[:6].hex()
+        # These are connection-source labels, not verified player identities.
+        # Users behind the same NAT may share an address label.
+        label = " source_tag=" + tag("ip", ip)
+        for name in ("Authorization", "X-Auth-Token", "X-Access-Token",
+                     "X-Authorization", "Cookie"):
+            secret = headers.get(name)
+            if secret:
+                # Never print the header value, only keyed ephemeral digest.
+                label += " credential_tag=" + tag("credential", name + ":" + secret)
+                label += " credential_header=" + name.lower()
+                break
+        return label
 
 
 def make_handler(app):
@@ -175,7 +203,8 @@ def make_handler(app):
             if len(raw) != length:
                 self.close_connection = True
                 return
-            LOG.info("POST %s port=%s bytes=%s", path, self.server.server_port, length)
+            LOG.info("POST %s port=%s bytes=%s%s", path, self.server.server_port,
+                     length, app.observation_label(self.client_address[0], self.headers))
             if path == ENVIRONMENT_ROUTE:
                 try:
                     LOG.info("Environment discovery: %s", describe_environment_request(raw))
@@ -276,6 +305,8 @@ def main():
     ap.add_argument("--ports", default="11702,11704")
     ap.add_argument("--routes", type=Path, default=Path(__file__).with_name("routes.mvp.example.json"))
     ap.add_argument("--capture-dir", type=Path, help="stores raw requests, potentially sensitive")
+    ap.add_argument("--trace-clients", action="store_true",
+                    help="log ephemeral HMAC tags for source IP / known auth headers; never values")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
     ap.add_argument("--key", type=Path, default=Path(__file__).parent / "certs" / "server.key")
     ap.add_argument("--max-body", type=int, default=2_000_000)
@@ -289,7 +320,8 @@ def main():
     ports = [int(v) for v in args.ports.split(",")]
     if not ports or len(set(ports)) != len(ports):
         ap.error("ports must be distinct")
-    app = App(read_routes(args.routes), args.capture_dir, args.max_body)
+    app = App(read_routes(args.routes), args.capture_dir, args.max_body,
+              trace_clients=args.trace_clients)
     servers = []
     try:
         for port in ports:
