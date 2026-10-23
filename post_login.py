@@ -65,7 +65,7 @@ class PostLogin:
                     return identity
         raise ValueError("Unrecognized refresh tokens")
 
-    def respond(self, path, raw):
+    def respond(self, path, raw, datacenter_ids=None):
         kind = ROUTES.get(path)
         if kind is None:
             raise ValueError("Unmapped service")
@@ -76,11 +76,11 @@ class PostLogin:
                     raise ValueError("Missing game version")
                 self.heartbeat_generation = next(v for n, _, v in items if n == 2)
                 self.heartbeat_state = next(v for n, _, v in items if n == 3)
-                return wire.heartbeat_register_result(), {"stage": kind, "poll_ms": 10000}
+                return wire.heartbeat_register_result(data_centers=datacenter_ids), {"stage": kind, "poll_ms": 10000}
             if kind == "heartbeat_update":
                 self.heartbeat_generation = next((v for n, _, v in items if n == 2), None)
                 self.heartbeat_state = next((v for n, _, v in items if n == 4), None)
-                return wire.heartbeat_update_result(), {"stage": kind}
+                return wire.heartbeat_update_result(data_centers=datacenter_ids), {"stage": kind}
             if kind == "heartbeat_unregister":
                 self.heartbeat_generation = None
                 self.heartbeat_state = None
@@ -88,7 +88,7 @@ class PostLogin:
             if kind == "datacenter_occupation":
                 if len(items) != 1 or not items[0][2]:
                     raise ValueError("Missing version")
-                return wire.data_center_result(), {"stage": kind, "centers": 1}
+                return wire.data_center_result(data_centers=datacenter_ids), {"stage": kind, "centers": len(datacenter_ids) if datacenter_ids else 1}
             if kind == "presence_connect":
                 self.presence_connected = True
                 return wire.presence_connect_result(), {"stage": kind}
