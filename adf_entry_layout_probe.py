@@ -77,7 +77,7 @@ def record_layout(entries: bytes, data_length: int):
     return result
 
 
-def summarize(folder: Path):
+def summarize(folder: Path, details=False):
     if not folder.is_dir():
         raise ValueError("capture directory does not exist")
     reports = []
@@ -120,30 +120,38 @@ def summarize(folder: Path):
         totals["divisible_by_12"] += int(report["multiple_of_12"])
         totals["has_offset_length_candidate"] += int(
             bool(report["candidate_offset_length_columns"]))
-    return {
+    pair_counts = Counter(
+        "offset=%s length=%s" % (pair["offset_column"], pair["length_column"])
+        for report in reports for pair in report["candidate_offset_length_columns"])
+    summary = {
         "packs_examined": len(reports),
         "skipped": skipped,
         "entries_multiple_of_12": totals["divisible_by_12"],
         "with_plausible_offset_length_columns": totals["has_offset_length_candidate"],
+        "plausible_column_pairs": dict(sorted(pair_counts.items())),
         "exact_duplicate_payload_groups": sorted(
             (n for n in fingerprints.values() if n > 1), reverse=True),
         "entries_count_histogram": dict(sorted(Counter(
             str(r["entry_count_if_12_bytes"]) for r in reports).items(),
             key=lambda item: int(item[0]) if item[0].isdigit() else -1)),
-        "per_pack": reports,
         "warning": (
             "Three little-endian 32-bit integers per 12-byte record is only a "
             "hypothesis. In-bounds pairs can be coincidences; no semantic layout "
             "is proven. No raw values, contents, account data or hashes are printed."
         ),
     }
+    if details:
+        summary["per_pack"] = reports
+    return summary
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("captures", type=Path, nargs="?", default=Path("captures"))
+    parser.add_argument("--details", action="store_true",
+                        help="show per-pack aggregate column patterns (still no raw data)")
     args = parser.parse_args()
-    print(json.dumps(summarize(args.captures), indent=2))
+    print(json.dumps(summarize(args.captures, details=args.details), indent=2))
 
 
 if __name__ == "__main__":
