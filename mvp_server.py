@@ -52,7 +52,11 @@ def read_routes(config_path: Path):
                 data = environment_result(conf["address"], conf["port"], conf["name"],
                                           conf["environment_id"], conf["region"],
                                           datacenter_id=conf.get("datacenter_id"),
-                                          include_retcode=conf.get("include_retcode", True))
+                                          include_retcode=conf.get("include_retcode", True),
+                                          datacenters=conf.get("datacenters"),
+                                          date_ms=conf.get("date_ms"),
+                                          include_maintenance_flag=conf.get(
+                                              "include_maintenance_flag", True))
             elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
                 data = None  # Generate a short-lived queue token for each request.
             elif route == DEQUEUE_ROUTE and conf["handler"] == "dequeue":
