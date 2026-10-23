@@ -29,7 +29,7 @@ def string(field, value):
     return blob(field, value.encode("utf-8"))
 
 
-def environment_result(address, port, name, environment_id, region, datacenter_id=None):
+def environment_result(address, port, name, environment_id, region, datacenter_id=None, include_retcode=True):
     """ServiceResult<ServiceResult_EnvironmentList<EnvironmentList>>.
 
     Only shape and field numbers are confirmed; endpoint values are hypotheses.
@@ -56,7 +56,11 @@ def environment_result(address, port, name, environment_id, region, datacenter_i
     env += scalar(6, 0)
     # EnvironmentList.Environments=1; ServiceResult_EnvironmentList.data=1
     wrapped = blob(1, blob(1, env))
-    return scalar(1, 0) + blob(ENVIRONMENT_RESULT_FIELD, wrapped)
+    typed_envelope = blob(ENVIRONMENT_RESULT_FIELD, wrapped)
+    # Verified external lab observation: real Saber discovery responses
+    # reportedly omit the outer ServiceResult.retCode field.
+    # Default preserves the previous mock wire bytes.
+    return (scalar(1, 0) + typed_envelope) if include_retcode else typed_envelope
 
 
 def read_varint(data, offset):
