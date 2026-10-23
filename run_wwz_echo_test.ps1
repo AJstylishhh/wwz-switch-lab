@@ -10,6 +10,12 @@ $desktop=$roots[0]
 $logs=Join-Path $desktop ('WWZ_Test_Logs_'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $report=Join-Path $desktop 'WWZ_Echo_Test_Report.txt'
+# Create a non-empty report immediately so early failures are visible.
+Set-Content -LiteralPath $report -Value @(
+    'WWZ Echo Test - initialization started',
+    ('Started: '+(Get-Date -Format s)),
+    'The report will be updated with the result or an error.'
+) -Encoding UTF8
 $udpOut=Join-Path $logs 'udp-output.txt'
 $udpErr=Join-Path $logs 'udp-errors.txt'
 $httpOut=Join-Path $logs 'https-output.txt'
@@ -166,7 +172,23 @@ try {
 } finally {
     Stop-Ours $udp
     Stop-Ours $http
-    try {Save-Report} catch {Write-Host ('Report error: '+$_.Exception.Message) -ForegroundColor Red}
+    try {
+        Save-Report
+    } catch {
+        $reportProblem = $_.Exception.Message
+        Write-Host ('Report error: '+$reportProblem) -ForegroundColor Red
+        # Leave an actionable error even if normal report formatting fails.
+        try {
+            Set-Content -LiteralPath $report -Value @(
+                'WWZ Echo Test - ERROR',
+                ('Test status: '+$status),
+                ('Report generation failed: '+$reportProblem),
+                ('Detailed logs folder: '+$logs)
+            ) -Encoding UTF8
+        } catch {
+            Write-Host ('Unable to write report: '+$_.Exception.Message) -ForegroundColor Red
+        }
+    }
 }
 Write-Host ''
 Write-Host ('Report on Desktop: '+$report) -ForegroundColor Cyan
