@@ -46,9 +46,9 @@ function Stop-Ours($proc) {
 function Locate-Certs($repoPath) {
     $dirs=@((Join-Path $repoPath 'certs'))
     foreach ($base in $roots) {
-        $dirs+=Join-Path $base 'wwz-switch-lab\certs'
-        $dirs+=Join-Path $base 'wwz2-switch-lab-2\certs'
-        $dirs+=Join-Path $base 'wwz-switch-lab-research\certs'
+        $dirs += (Join-Path $base 'wwz-switch-lab\certs')
+        $dirs += (Join-Path $base 'wwz2-switch-lab-2\certs')
+        $dirs += (Join-Path $base 'wwz-switch-lab-research\certs')
     }
     foreach ($dir in ($dirs | Select-Object -Unique)) {
         $crt=Join-Path $dir 'server.crt'
