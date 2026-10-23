@@ -52,7 +52,7 @@ class Identity:
     provider_user: str
 
 
-def encode_signin(identity, services, *, address, port, name):
+def encode_signin(identity, services, *, address, port, name, provider_environment=None):
     """SignInResult in ServiceResult_SignInResult (field 323326796)."""
     if not (isinstance(address, str) and address and isinstance(name, str) and
             name and 1 <= int(port) <= 65535):
@@ -68,6 +68,13 @@ def encode_signin(identity, services, *, address, port, name):
     guid = b"\x09" + binary[:8] + b"\x11" + binary[8:]
     data += blob(8, blob(1, guid))  # SignInResult.User.Uid (bcl.Guid)
     data += string(9, identity.provider_user)
+    if provider_environment is not None:
+        environment_enum = {"Dev": 1, "Retail": 2}
+        if provider_environment not in environment_enum:
+            raise ValueError("unknown test provider environment")
+        # SignInResult.ProviderInfo=10 -> ProviderOptionalInfo.Environment=2.
+        # Deliberately do NOT synthesize HasSubscription=1.
+        data += blob(10, scalar(2, environment_enum[provider_environment]))
     return scalar(1, 0) + blob(SIGNIN_RESULT_FIELD, blob(1, data))
 
 
@@ -79,7 +86,7 @@ class AuthSessions:
         self.identities = {}
         self.lock = threading.RLock()
 
-    def respond(self, raw, *, address, port, name):
+    def respond(self, raw, *, address, port, name, provider_environment=None):
         token, services = parse_dequeue(raw)
         if not self.queue.recognizes(token):
             raise ValueError("unknown or expired queue token")
@@ -98,6 +105,8 @@ class AuthSessions:
                     "lab-provider-" + secrets.token_urlsafe(32),
                     uuid4(), "lab-" + secrets.token_urlsafe(12))
                 self.identities[token] = ident
-            response = encode_signin(ident, services, address=address, port=port, name=name)
+            response = encode_signin(
+                ident, services, address=address, port=port, name=name,
+                provider_environment=provider_environment)
             return response, {"service_versions": len(services),
                               "endpoints": len(set((name, *services)))}
