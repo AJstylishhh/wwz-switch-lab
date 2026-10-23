@@ -5,7 +5,8 @@
     "port": 11704,
     "name": "wwz-production.wwzapi.com",
     "environment_id": "Retail",
-    "region": "local"
+    "region": "local",
+    "datacenter_id": "local"
   },
   "0ae806e0260340fe86eb38ff8708252f.svc/3ad39ec0971940b98e522d40229704b9": {
     "handler": "enqueue"
@@ -36,5 +37,11 @@
   },
   "fc8ff9d3e52742f38746806b2ab946a4.svc/cd6d3021266746ffac6a0113e2e89e31": {
     "handler": "diagnostics_ack"
+  },
+  "fb383fc41afb42ce8c3f91bf828ce5a6.svc/f81fca3efea5407ab0cd288a2ae2b9ca": {
+    "handler": "success_empty"
+  },
+  "b89429154e224660837a4a307391b0b4.svc/2299e0e7d40548838e89bba0268ed3b2": {
+    "handler": "success_empty"
   }
 }
