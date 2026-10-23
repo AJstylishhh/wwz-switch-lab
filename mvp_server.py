@@ -82,9 +82,18 @@ def read_routes(config_path: Path):
                     raise ValueError("invalid presence_available_seconds")
                 if duration and conf["handler"] != "presence_connect":
                     raise ValueError("presence_available_seconds only applies to presence_connect")
+                version_values = conf.get("heartbeat_version_values")
+                if version_values is not None:
+                    if conf["handler"] not in ("heartbeat_register", "heartbeat_update"):
+                        raise ValueError("heartbeat_version_values only applies to heartbeat handlers")
+                    if (not isinstance(version_values, list) or
+                            not 1 <= len(version_values) <= 20 or
+                            any(type(x) is not int or not 0 <= x < 2**63 for x in version_values)):
+                        raise ValueError("heartbeat_version_values must be 1..20 nonnegative int64 values")
                 data = {"post_login_handler": conf["handler"],
                         "datacenter_ids": dc_ids,
-                        "presence_available_seconds": duration}
+                        "presence_available_seconds": duration,
+                        "heartbeat_version_values": version_values}
             else:
                 raise ValueError("unsupported handler")
         elif "response_hex" in conf:
@@ -92,6 +101,15 @@ def read_routes(config_path: Path):
         else:
             data = (config_path.parent / conf["response_file"]).read_bytes()
         routes[route] = status, data
+    # If an experimental fixture overrides heartbeat versions, both response
+    # types must advertise the same list. Partial overrides hide logic errors.
+    heartbeat_routes = [route for route, (_, config) in routes.items()
+                        if isinstance(config, dict) and
+                        config.get("post_login_handler") in ("heartbeat_register", "heartbeat_update")]
+    specified = [routes[route][1].get("heartbeat_version_values") for route in heartbeat_routes]
+    if any(values is not None for values in specified):
+        if len(heartbeat_routes) != 2 or any(values != specified[0] for values in specified):
+            raise ValueError("Heartbeat Register and Update must have identical version values")
     return routes
 
 
@@ -184,7 +202,8 @@ def make_handler(app):
                 try:
                     data, info = app.post_login.respond(
                         path, raw, datacenter_ids=answer[1].get("datacenter_ids"),
-                        presence_available_seconds=answer[1].get("presence_available_seconds", 0))
+                        presence_available_seconds=answer[1].get("presence_available_seconds", 0),
+                        heartbeat_version_values=answer[1].get("heartbeat_version_values"))
                 except ValueError as exc:
                     LOG.warning("Experimental post-login request rejected on %s: %s", path, exc)
                     return self.reply(400, b"Invalid experimental RPC", "text/plain")
