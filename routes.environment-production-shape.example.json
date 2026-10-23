@@ -134,16 +134,34 @@
     "name": "prod-Master-https"
   },
   "772eb3c6037845daa9ab86137203ccf2.svc/c5aca06ab450401d9c1b3a9c522ba3f0": {
-    "handler": "heartbeat_register"
+    "handler": "heartbeat_register",
+    "datacenter_ids": [
+      "WWZ-EA",
+      "WWZ-EU",
+      "WWZ-US",
+      "WWZ-AU"
+    ]
   },
   "772eb3c6037845daa9ab86137203ccf2.svc/e000e353458e4062b8bf7ebe912b225d": {
-    "handler": "heartbeat_update"
+    "handler": "heartbeat_update",
+    "datacenter_ids": [
+      "WWZ-EA",
+      "WWZ-EU",
+      "WWZ-US",
+      "WWZ-AU"
+    ]
   },
   "772eb3c6037845daa9ab86137203ccf2.svc/2b7cf45af675422d99bfc316ee316319": {
     "handler": "heartbeat_unregister"
   },
   "6c60c0f72c1343a385bd02b2b311f402.svc/096a2aba96f44f37802915dc1164746b": {
-    "handler": "datacenter_occupation"
+    "handler": "datacenter_occupation",
+    "datacenter_ids": [
+      "WWZ-EA",
+      "WWZ-EU",
+      "WWZ-US",
+      "WWZ-AU"
+    ]
   },
   "b89429154e224660837a4a307391b0b4.svc/dd280c97b0384ad9907571558151b40c": {
     "handler": "presence_connect"
