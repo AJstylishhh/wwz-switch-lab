@@ -134,10 +134,14 @@ try {
     Write-Host 'Running regression tests...'
     Push-Location $repo
     try {
-        & $python -m unittest discover -s tests -p test_udp_probe_compare.py -v 2>&1 | Tee-Object -FilePath $testOut | Out-Host
-        if ($LASTEXITCODE -ne 0) {throw 'UDP probe tests failed.'}
-        & $python -m unittest discover -s tests -p test_production_environment_shape.py -v 2>&1 | Tee-Object -FilePath $testOut -Append | Out-Host
-        if ($LASTEXITCODE -ne 0) {throw 'Environment tests failed.'}
+        $test1 = Start-Process -FilePath $python -ArgumentList '-m unittest discover -s tests -p test_udp_probe_compare.py -v' -WorkingDirectory $repo -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'test-udp-stdout.txt') -RedirectStandardError (Join-Path $logs 'test-udp-stderr.txt')
+        $udpTestText = @(Get-Content (Join-Path $logs 'test-udp-stdout.txt')) + @(Get-Content (Join-Path $logs 'test-udp-stderr.txt'))
+        $udpTestText | Set-Content -LiteralPath $testOut
+        if ($test1.ExitCode -ne 0) {throw 'UDP probe tests failed. Read local unit-tests.txt.'}
+        $test2 = Start-Process -FilePath $python -ArgumentList '-m unittest discover -s tests -p test_production_environment_shape.py -v' -WorkingDirectory $repo -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'test-env-stdout.txt') -RedirectStandardError (Join-Path $logs 'test-env-stderr.txt')
+        $envTestText = @(Get-Content (Join-Path $logs 'test-env-stdout.txt')) + @(Get-Content (Join-Path $logs 'test-env-stderr.txt'))
+        $envTestText | Add-Content -LiteralPath $testOut
+        if ($test2.ExitCode -ne 0) {throw 'Environment tests failed. Read local unit-tests.txt.'}
     } finally {Pop-Location}
     $udp=Start-Process -FilePath $python -ArgumentList '-u udp_probe_compare.py --echo-38 --timeout 105' -WorkingDirectory $repo -PassThru -WindowStyle Hidden -RedirectStandardOutput $udpOut -RedirectStandardError $udpErr
     $httpArgs='-u mvp_server.py --host 0.0.0.0 --ports 11702,11704 --routes routes.environment-production-shape.example.json --cert "'+$certs.Certificate+'" --key "'+$certs.Key+'"'
