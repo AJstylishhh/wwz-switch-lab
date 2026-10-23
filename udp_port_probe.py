@@ -18,7 +18,7 @@ LOG = logging.getLogger("wwz.udp-probe")
 def monitor(host="0.0.0.0", port=50000, packet_limit=0, timeout=0):
     if not 1 <= port <= 65535 or packet_limit < 0 or timeout < 0:
         raise ValueError("invalid listener options")
-    peers = {}
+    source_sockets = {}
     count = 0
     start = time.monotonic()
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener:
@@ -32,13 +32,14 @@ def monitor(host="0.0.0.0", port=50000, packet_limit=0, timeout=0):
                 payload, addr = listener.recvfrom(65535)
             except socket.timeout:
                 continue
-            if addr not in peers:
-                peers[addr] = len(peers) + 1
+            if addr not in source_sockets:
+                source_sockets[addr] = len(source_sockets) + 1
             count += 1
-            LOG.info("UDP datagram peer=%s bytes=%s total=%s",
-                     peers[addr], len(payload), count)
-    LOG.info("UDP probe complete packets=%s distinct_peers=%s", count, len(peers))
-    return count, len(peers)
+            LOG.info("UDP datagram source_socket=%s bytes=%s total=%s",
+                     source_sockets[addr], len(payload), count)
+    LOG.info("UDP probe complete packets=%s distinct_source_sockets=%s",
+             count, len(source_sockets))
+    return count, len(source_sockets)
 
 
 def main():
