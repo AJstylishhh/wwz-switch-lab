@@ -62,9 +62,13 @@ def data_center_result(data_centers=None):
     return result("datacenter_occupation", occupations_for(1, data_centers))
 
 
-def presence_connect_result():
-    # RegisterResult.ReturnAvailableSeconds=1; 0 = no forced backoff.
-    return result("presence_connect", blob(1, scalar(1, 0)))
+def presence_connect_result(available_seconds=0):
+    # RegisterResult.ReturnAvailableSeconds=1. Zero is the historical lab
+    # default; 300 is an independent, unverified timing hypothesis from
+    # another local experiment. Do not change the default without evidence.
+    if not isinstance(available_seconds, int) or not 0 <= available_seconds <= 3600:
+        raise ValueError("invalid presence available seconds")
+    return result("presence_connect", blob(1, scalar(1, available_seconds)))
 
 
 def refresh_tokens_result(tokens, provider_token, refresh_after=300):
