@@ -28,6 +28,7 @@ MARKERS = (
     "CS_HTTPManager_DecompressionError", "CS_TimeOut", "CS_UpdatePolicyReconnect",
     "CS_UnavaliableInThisConfiguration", "CS_HTTPManager_Error",
     "US_UserSignedOut", "Failed to establish connection with WWZ services",
+    "autogen VersionDataType_Last does not corresponds with backend values",
 )
 SAFE_FORMATS = {"adf", "json", "jsonl", "protobuf", "binary", "csv",
                 "gzip", "zlib", "text", "msgpack", "zip"}
