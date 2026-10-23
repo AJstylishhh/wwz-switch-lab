@@ -40,18 +40,36 @@ def occupations_for(field, data_centers=None):
     return b"".join(blob(field, occupation(center)) for center in centers)
 
 
-def heartbeat_register_result(users_online=1, poll_ms=10000, data_centers=None):
+def user_versions(version_values=None):
+    """UserVersions.Versions=1, repeated int64 (descriptor-grounded).
+
+    Zero entries preserve our old empty submessage. Nonempty values are a
+    test hypothesis and MUST be consistent in register and update responses.
+    """
+    if version_values is None:
+        return blob(1, b"")
+    if not isinstance(version_values, (list, tuple)) or not (1 <= len(version_values) <= 20):
+        raise ValueError("heartbeat version values must be a list of 1..20 integers")
+    if any(type(value) is not int or not (0 <= value <= 2**63 - 1)
+           for value in version_values):
+        raise ValueError("heartbeat version values must be nonnegative int64")
+    return blob(1, b"".join(scalar(1, value) for value in version_values))
+
+
+def heartbeat_register_result(users_online=1, poll_ms=10000, data_centers=None,
+                              version_values=None):
     # UserHeartbeatRegisterResult: Versions=1, PollingIntervals=2,
     # UsersOnline=3, DataCenterOccupation=4.
-    inner = blob(1, b"")  # UserVersions unknown until client semantics traced
+    inner = user_versions(version_values)
     for state in range(7):  # GameClientState Offline through Rematch
         inner += blob(2, scalar(1, state) + scalar(2, poll_ms))
     inner += scalar(3, users_online) + occupations_for(4, data_centers)
     return result("heartbeat_register", blob(1, inner))
 
 
-def heartbeat_update_result(users_online=1, poll_ms=10000, data_centers=None):
-    inner = (blob(1, b"") + scalar(2, users_online) +
+def heartbeat_update_result(users_online=1, poll_ms=10000, data_centers=None,
+                            version_values=None):
+    inner = (user_versions(version_values) + scalar(2, users_online) +
              occupations_for(3, data_centers) +
              blob(4, scalar(1, poll_ms) + scalar(2, poll_ms)))
     return result("heartbeat_update", blob(1, inner))
