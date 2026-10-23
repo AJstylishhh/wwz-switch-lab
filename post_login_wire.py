@@ -33,25 +33,33 @@ def occupation(data_center="local"):
     return string(1, data_center) + scalar(2, 0) + scalar(3, 0)
 
 
-def heartbeat_register_result(users_online=1, poll_ms=10000):
+def occupations_for(field, data_centers=None):
+    centers = ("local",) if data_centers is None else tuple(data_centers)
+    if not centers or any(not isinstance(center, str) or not center for center in centers):
+        raise ValueError("nonempty data center names required")
+    return b"".join(blob(field, occupation(center)) for center in centers)
+
+
+def heartbeat_register_result(users_online=1, poll_ms=10000, data_centers=None):
     # UserHeartbeatRegisterResult: Versions=1, PollingIntervals=2,
     # UsersOnline=3, DataCenterOccupation=4.
     inner = blob(1, b"")  # UserVersions unknown until client semantics traced
     for state in range(7):  # GameClientState Offline through Rematch
         inner += blob(2, scalar(1, state) + scalar(2, poll_ms))
-    inner += scalar(3, users_online) + blob(4, occupation())
+    inner += scalar(3, users_online) + occupations_for(4, data_centers)
     return result("heartbeat_register", blob(1, inner))
 
 
-def heartbeat_update_result(users_online=1, poll_ms=10000):
-    inner = (blob(1, b"") + scalar(2, users_online) + blob(3, occupation()) +
+def heartbeat_update_result(users_online=1, poll_ms=10000, data_centers=None):
+    inner = (blob(1, b"") + scalar(2, users_online) +
+             occupations_for(3, data_centers) +
              blob(4, scalar(1, poll_ms) + scalar(2, poll_ms)))
     return result("heartbeat_update", blob(1, inner))
 
 
-def data_center_result():
+def data_center_result(data_centers=None):
     # ServiceResult_List_DataCenterOccupation.data is repeated field 1.
-    return result("datacenter_occupation", blob(1, occupation()))
+    return result("datacenter_occupation", occupations_for(1, data_centers))
 
 
 def presence_connect_result():
