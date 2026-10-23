@@ -54,7 +54,9 @@ def read_routes(config_path: Path):
                                           datacenter_id=conf.get("datacenter_id"),
                                           include_retcode=conf.get("include_retcode", True),
                                           datacenters=conf.get("datacenters"),
-                                          date_ms=conf.get("date_ms"),
+                                          date_ms=(int(datetime.now(timezone.utc).timestamp() * 1000)
+                                                   if conf.get("date_ms") == "now"
+                                                   else conf.get("date_ms")),
                                           include_maintenance_flag=conf.get(
                                               "include_maintenance_flag", True))
             elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
