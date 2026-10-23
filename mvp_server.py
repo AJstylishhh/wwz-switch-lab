@@ -55,11 +55,14 @@ def read_routes(config_path: Path):
             elif route == ENQUEUE_ROUTE and conf["handler"] == "enqueue":
                 data = None  # Generate a short-lived queue token for each request.
             elif route == DEQUEUE_ROUTE and conf["handler"] == "dequeue":
-                data = {"address": conf["address"], "port": int(conf["port"]), "name": conf["name"]}
+                data = {"address": conf["address"], "port": int(conf["port"]), "name": conf["name"],
+                        "provider_environment": conf.get("provider_environment")}
                 if (not isinstance(data["address"], str) or not data["address"] or
                         not isinstance(data["name"], str) or not data["name"] or
                         not 1 <= data["port"] <= 65535):
                     raise ValueError("invalid Dequeue endpoint")
+                if data["provider_environment"] not in (None, "Dev", "Retail"):
+                    raise ValueError("invalid provider environment test value")
             elif route in POST_LOGIN_ROUTES and conf["handler"] == POST_LOGIN_ROUTES[route]:
                 data = {"post_login_handler": conf["handler"]}
             else:
