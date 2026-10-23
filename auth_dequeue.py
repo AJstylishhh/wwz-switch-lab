@@ -3,8 +3,10 @@
 No Nintendo auth is performed. Only locally issued queue tokens are accepted.
 """
 from dataclasses import dataclass
+import hmac
 import secrets
 import threading
+import time
 from uuid import uuid4
 
 from wwz_wire import fields, blob, scalar, string
@@ -79,25 +81,60 @@ def encode_signin(identity, services, *, address, port, name, provider_environme
 
 
 class AuthSessions:
-    """Process-local identities linked to bounded, expiring QueueState."""
-    def __init__(self, queue, limit=256):
+    """Bounded local identities with independent login and session lifetimes.
+
+    Queue tokens authorize the initial Dequeue only (default five minutes).
+    A successfully issued SignInResult creates an independent, expiring
+    authenticated session. Refreshing its locally-issued tokens extends that
+    session's idle lifetime; it does not require the old queue ticket.
+    This is experimental identity emulation, not Nintendo authentication.
+    """
+
+    def __init__(self, queue, limit=256, session_ttl=3600, clock=time.monotonic):
+        if limit <= 0 or session_ttl <= 0:
+            raise ValueError("limit and session_ttl must be positive")
         self.queue = queue
         self.limit = limit
+        self.session_ttl = session_ttl
+        self.clock = clock
         self.identities = {}
+        self.expirations = {}
         self.lock = threading.RLock()
+
+    def _prune_locked(self, now):
+        for key, expiration in tuple(self.expirations.items()):
+            if expiration <= now:
+                self.expirations.pop(key, None)
+                self.identities.pop(key, None)
+
+    def resolve_refresh_tokens(self, tokens):
+        """Validate all supplied credentials against one active local session."""
+        if not tokens or len(tokens) > 3 or any(not isinstance(t, str) or not t for t in tokens):
+            raise ValueError("Unrecognized refresh tokens")
+        with self.lock:
+            now = self.clock()
+            self._prune_locked(now)
+            for queue_token, identity in self.identities.items():
+                allowed = (identity.auth, identity.diagnostic, identity.access)
+                if all(any(hmac.compare_digest(t, known) for known in allowed) for t in tokens):
+                    self.expirations[queue_token] = now + self.session_ttl
+                    return identity
+        raise ValueError("Unrecognized refresh tokens")
 
     def respond(self, raw, *, address, port, name, provider_environment=None):
         token, services = parse_dequeue(raw)
+        # Queue ticket is checked *only* for the initial Dequeue.
         if not self.queue.recognizes(token):
             raise ValueError("unknown or expired queue token")
         with self.lock:
-            for key in list(self.identities):
-                if not self.queue.recognizes(key):
-                    del self.identities[key]
+            now = self.clock()
+            self._prune_locked(now)
             ident = self.identities.get(token)
             if ident is None:
                 if len(self.identities) >= self.limit:
-                    del self.identities[next(iter(self.identities))]
+                    oldest = min(self.expirations, key=self.expirations.get)
+                    self.expirations.pop(oldest, None)
+                    self.identities.pop(oldest, None)
                 ident = Identity(
                     "lab-auth-" + secrets.token_urlsafe(32),
                     "lab-diagnostic-" + secrets.token_urlsafe(32),
@@ -105,6 +142,7 @@ class AuthSessions:
                     "lab-provider-" + secrets.token_urlsafe(32),
                     uuid4(), "lab-" + secrets.token_urlsafe(12))
                 self.identities[token] = ident
+            self.expirations[token] = now + self.session_ttl
             response = encode_signin(
                 ident, services, address=address, port=port, name=name,
                 provider_environment=provider_environment)
