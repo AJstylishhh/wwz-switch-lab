@@ -67,13 +67,17 @@ def read_routes(config_path: Path):
                 data = None  # Generate a short-lived queue token for each request.
             elif route == DEQUEUE_ROUTE and conf["handler"] == "dequeue":
                 data = {"address": conf["address"], "port": int(conf["port"]), "name": conf["name"],
-                        "provider_environment": conf.get("provider_environment")}
+                        "provider_environment": conf.get("provider_environment"),
+                        "provider_has_subscription": conf.get("provider_has_subscription")}
                 if (not isinstance(data["address"], str) or not data["address"] or
                         not isinstance(data["name"], str) or not data["name"] or
                         not 1 <= data["port"] <= 65535):
                     raise ValueError("invalid Dequeue endpoint")
                 if data["provider_environment"] not in (None, "Dev", "Retail"):
                     raise ValueError("invalid provider environment test value")
+                if (data["provider_has_subscription"] is not None and
+                        type(data["provider_has_subscription"]) is not bool):
+                    raise ValueError("provider_has_subscription must be boolean when set")
             elif route in POST_LOGIN_ROUTES and conf["handler"] == POST_LOGIN_ROUTES[route]:
                 dc_ids = conf.get("datacenter_ids")
                 if dc_ids is not None and (not isinstance(dc_ids, list) or
