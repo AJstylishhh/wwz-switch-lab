@@ -56,3 +56,27 @@ py mvp_server.py --host 0.0.0.0 --ports 11701,11702,11704 --routes routes.heartb
 Stop any other HTTPS/UDP listeners on the selected ports first. No separate UDP process is needed for this heartbeat-specific test. Observe how soon `Heartbeat.UnRegister` occurs, whether repeated Update RPCs continue, any new paths, and the game's actual menu result. Never commit the collaborator's original captures or tokens.
 
 Passing synthetic unit tests verifies *encoding*, not that four is the correct client enum count. If four fails, analyze actual client enum count rather than blindly sweeping all guesses.
+
+
+## October 23 remote Linux test result — count four still fails
+
+The current remote test on the user's Linux host used
+`routes.remote.local.json` derived from the four-version fixture.
+After verified TLS, Enqueue and Dequeue:
+
+- 20:25:40.599 — Heartbeat.Register: `version_count=4`.
+- 20:25:41.211 — Heartbeat.Update: `version_count=4`.
+- 20:25:41.463 — initial ADF WriteADFPack: both compressed parts successfully decoded, no recognized marker.
+- 20:25:41.974 — empty-body Access service method, likely sign-out.
+- 20:25:42.059 — second decoded ADF WriteADFPack includes the literal
+  `autogen VersionDataType_Last does not corresponds with backend values`.
+- 20:25:42.177 — Heartbeat.UnRegister.
+- 20:25:49.036 — repeated EnvironmentDiscovery.
+
+This is evidence that **four copies of build `8802288` in both heartbeat responses do not fix the disconnect**. The client diagnostic marker remains present in the second upload; the decoder matches *strings* rather than decoded ADF event types, so it does not prove which client check fired.
+
+Independent offline review of the already-provided collaborator ZIP: the literal string appeared in **25 of 62** older diagnostic packs, concentrated in second/terminal packs of short sessions, while the approximately five-minute sequence had no such match in its accompanying packs. That pattern favors a runtime failure signal rather than an immutable upload dictionary, but is not formal event-level decoding.
+
+The local ZIP has a persisted `state/version_sweep.json` with `step=11` and a later-modified source version that iterates counts `[4,5,3,6,2,7,8,9,10,11,12,13,14,15,16,17,18,19,20,1]`. **This snapshot cannot prove the count used during the five-minute capture**; do not label a count as correct based on that file. The Switch executable includes the diagnostic literal, but its `VersionDataType_Last` constant has not yet been recovered.
+
+Next: determine enum cardinality from the game binary or capture actual ADF event records, rather than performing blind version-count sweeps. Keep the controlled four-entry fixture as a documented failed baseline. No raw captured credentials are committed.
