@@ -77,8 +77,10 @@ class ProductionEnvironmentShapeTests(unittest.TestCase):
         )
         for reply, wrapper_num, repeated_field in envelope_defs:
             wrapper = children(reply, wrapper_num)[0]
-            internal = children(wrapper, 1)[0]
-            occupations = children(internal, repeated_field)
+            # List<DataCenterOccupation> has repeated data=1 directly;
+            # heartbeat results contain a nested result data=1.
+            container = wrapper if wrapper_num == 536714262 else children(wrapper, 1)[0]
+            occupations = children(container, repeated_field)
             self.assertEqual(ids, [children(x, 1)[0].decode("utf-8") for x in occupations])
         self.assertEqual(4, sum(1 for _ in env_conf["datacenters"]))
 
