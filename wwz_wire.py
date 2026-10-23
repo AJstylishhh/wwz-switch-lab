@@ -29,7 +29,9 @@ def string(field, value):
     return blob(field, value.encode("utf-8"))
 
 
-def environment_result(address, port, name, environment_id, region, datacenter_id=None, include_retcode=True):
+def environment_result(address, port, name, environment_id, region, datacenter_id=None,
+                       include_retcode=True, datacenters=None, date_ms=None,
+                       include_maintenance_flag=True):
     """ServiceResult<ServiceResult_EnvironmentList<EnvironmentList>>.
 
     Only shape and field numbers are confirmed; endpoint values are hypotheses.
@@ -53,9 +55,43 @@ def environment_result(address, port, name, environment_id, region, datacenter_i
         dc = (string(1, datacenter_id) + scalar(2, 0) + scalar(3, 0) +
               blob(4, endpoint))
         env += blob(5, dc)
-    env += scalar(6, 0)
-    # EnvironmentList.Environments=1; ServiceResult_EnvironmentList.data=1
-    wrapped = blob(1, blob(1, env))
+    if datacenters is not None:
+        if datacenter_id is not None:
+            raise ValueError("cannot combine datacenter_id and datacenters")
+        if not isinstance(datacenters, list) or not datacenters:
+            raise ValueError("datacenters must be a nonempty list")
+        for dc in datacenters:
+            dc_id = dc["id"]
+            if not isinstance(dc_id, str) or not dc_id:
+                raise ValueError("data center ID required")
+            ep_list = dc["endpoints"]
+            if not isinstance(ep_list, list) or not ep_list:
+                raise ValueError("each data center requires endpoints")
+            message = string(1, dc_id)
+            for game in ep_list:
+                udp_protocol = int(game.get("protocol", 4))
+                if udp_protocol != 4:
+                    raise ValueError("local game endpoint must use UDP protocol=4")
+                udp_port = int(game["port"])
+                if not 1 <= udp_port <= 65535:
+                    raise ValueError("invalid game endpoint port")
+                endpoint = (string(1, game["name"]) + string(2, game["address"]) +
+                            scalar(3, udp_port) + scalar(4, udp_protocol))
+                message += blob(4, endpoint)
+            localized = string(1, dc.get("locale", "en-US")) + string(
+                2, dc.get("display", dc_id))
+            message += blob(5, localized)
+            env += blob(5, message)
+    if include_maintenance_flag:
+        env += scalar(6, 0)
+    # EnvironmentList.Environments=1; EnvironmentList.Date=2;
+    # ServiceResult_EnvironmentList.data=1
+    env_list = blob(1, env)
+    if date_ms is not None:
+        if not isinstance(date_ms, int) or date_ms < 0:
+            raise ValueError("invalid environment date_ms")
+        env_list += scalar(2, date_ms)
+    wrapped = blob(1, env_list)
     typed_envelope = blob(ENVIRONMENT_RESULT_FIELD, wrapped)
     # Verified external lab observation: real Saber discovery responses
     # reportedly omit the outer ServiceResult.retCode field.
