@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 from mvp_server import read_routes
 from post_login_wire import PRESENCE_CONNECT, presence_connect_result
@@ -24,8 +26,16 @@ class PresenceDurationTests(unittest.TestCase):
                 expected["presence_available_seconds"] = 300
             self.assertEqual(expected, trial[name])
 
-        original = read_routes(root / "routes.environment-production-shape.example.json")
-        changed = read_routes(root / "routes.presence-300.example.json")
+        # Both configs request date_ms="now". Freeze startup time for this
+        # comparison; otherwise a 1ms clock tick is a false difference.
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 10, 23, 12, 0, 0, tzinfo=timezone.utc)
+
+        with patch("mvp_server.datetime", FrozenDateTime):
+            original = read_routes(root / "routes.environment-production-shape.example.json")
+            changed = read_routes(root / "routes.presence-300.example.json")
         self.assertEqual(set(original), set(changed))
         for path in original:
             if path != PRESENCE_CONNECT:
