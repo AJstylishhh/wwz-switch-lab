@@ -65,7 +65,7 @@ class PostLogin:
                     return identity
         raise ValueError("Unrecognized refresh tokens")
 
-    def respond(self, path, raw, datacenter_ids=None):
+    def respond(self, path, raw, datacenter_ids=None, presence_available_seconds=0):
         kind = ROUTES.get(path)
         if kind is None:
             raise ValueError("Unmapped service")
@@ -91,7 +91,8 @@ class PostLogin:
                 return wire.data_center_result(data_centers=datacenter_ids), {"stage": kind, "centers": len(datacenter_ids) if datacenter_ids else 1}
             if kind == "presence_connect":
                 self.presence_connected = True
-                return wire.presence_connect_result(), {"stage": kind}
+                return (wire.presence_connect_result(presence_available_seconds),
+                        {"stage": kind, "available_seconds": presence_available_seconds})
             if kind == "refresh_tokens":
                 try:
                     tokens = [v.decode("ascii") for n, _, v in items]
