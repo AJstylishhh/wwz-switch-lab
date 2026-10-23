@@ -22,6 +22,7 @@ from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment
 from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
 from auth_dequeue import DEQUEUE_ROUTE, AuthSessions
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
+from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -134,6 +135,16 @@ def make_handler(app):
         def log_message(self, fmt, *args):
             pass  # requests may contain tokens in query strings
 
+        def handle(self):
+            # The Switch often closes TLS keep-alive sockets when the game
+            # exits. These are normal peer disconnects, not server crashes.
+            # Do not conceal malformed protobuf, handler errors, etc.
+            try:
+                super().handle()
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError,
+                    ssl.SSLEOFError):
+                LOG.debug("Switch closed a keep-alive connection")
+
         def reply(self, status, data, content_type="application/protobuf"):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -176,9 +187,17 @@ def make_handler(app):
                 (app.capture_dir / (filename + ".json")).write_text(
                     json.dumps({"path": path, "length": length}), encoding="utf-8")
             if not GUID_ROUTE.fullmatch(path):
+                # The newly observed RedLynx endpoint on 11701 is not a
+                # GUID route. Log shape only; it has no verified response yet.
+                if path == REDLYNX_ENVIRONMENT:
+                    LOG.info("Unimplemented RedLynx environment request shape: %s",
+                             unknown_request_summary(path, raw))
                 return self.reply(404, b"Invalid RPC path", "text/plain")
             answer = app.routes.get(path)
             if answer is None:
+                summary = unknown_request_summary(path, raw)
+                if summary is not None:
+                    LOG.info("Unimplemented RPC request shape: %s %s", path, summary)
                 LOG.warning("Unmapped RPC: %s", path)
                 return self.reply(404, b"Unknown RPC", "text/plain")
             if path == ENQUEUE_ROUTE and answer[1] is None:
