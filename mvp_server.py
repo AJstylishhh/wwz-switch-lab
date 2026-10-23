@@ -77,8 +77,14 @@ def read_routes(config_path: Path):
                         any(not isinstance(i, str) or not i for i in dc_ids) or
                         len(set(dc_ids)) != len(dc_ids)):
                     raise ValueError("invalid datacenter_ids in experimental route")
+                duration = conf.get("presence_available_seconds", 0)
+                if not isinstance(duration, int) or isinstance(duration, bool) or not 0 <= duration <= 3600:
+                    raise ValueError("invalid presence_available_seconds")
+                if duration and conf["handler"] != "presence_connect":
+                    raise ValueError("presence_available_seconds only applies to presence_connect")
                 data = {"post_login_handler": conf["handler"],
-                        "datacenter_ids": dc_ids}
+                        "datacenter_ids": dc_ids,
+                        "presence_available_seconds": duration}
             else:
                 raise ValueError("unsupported handler")
         elif "response_hex" in conf:
@@ -177,7 +183,8 @@ def make_handler(app):
             if path in POST_LOGIN_ROUTES and isinstance(answer[1], dict):
                 try:
                     data, info = app.post_login.respond(
-                        path, raw, datacenter_ids=answer[1].get("datacenter_ids"))
+                        path, raw, datacenter_ids=answer[1].get("datacenter_ids"),
+                        presence_available_seconds=answer[1].get("presence_available_seconds", 0))
                 except ValueError as exc:
                     LOG.warning("Experimental post-login request rejected on %s: %s", path, exc)
                     return self.reply(400, b"Invalid experimental RPC", "text/plain")
