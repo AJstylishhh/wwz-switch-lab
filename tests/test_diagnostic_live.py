@@ -56,7 +56,8 @@ class LiveDiagnosticsTests(unittest.TestCase):
         raw = pack((b"x" * (4 * 1024 * 1024 + 16)) + MISMATCH.encode())
         summary = safe_live_summary(raw)
         self.assertNotIn(MISMATCH, summary["known_marker_strings"])
-        self.assertNotIn("zlib", summary["verified_decompression"])
+        # The oversized data field is skipped, but the small entries field still decodes.
+        self.assertEqual({"zlib": 1}, summary["verified_decompression"])
         reply, _ = PostLogin(None).respond(DIAGNOSTICS_WRITE, raw)
         self.assertEqual([(1, 0, 0)], list(fields(reply)))
 
