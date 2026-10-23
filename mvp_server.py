@@ -145,8 +145,8 @@ class App:
         # These are connection-source labels, not verified player identities.
         # Users behind the same NAT may share an address label.
         label = " source_tag=" + tag("ip", ip)
-        for name in ("Authorization", "X-Auth-Token", "X-Access-Token",
-                     "X-Authorization", "Cookie"):
+        for name in ("Authorization", "AuthorizationToken", "X-Auth-Token",
+                     "X-Access-Token", "X-Authorization", "Cookie"):
             secret = headers.get(name)
             if secret:
                 # Never print the header value, only keyed ephemeral digest.
