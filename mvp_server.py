@@ -193,14 +193,18 @@ class Server(ThreadingHTTPServer):
     def get_request(self):
         try:
             sock, addr = super().get_request()
-        except ssl.SSLError as exc:
-            # TLS-wrapped listening sockets handshake during accept().
-            # Report only local port / SSL failure class, never remote IP,
-            # raw request data or private hostname.
-            LOG.warning("TLS handshake failed port=%s reason=%s",
-                        self.server_port, getattr(exc, "reason", "unknown"))
+        except OSError as exc:
+            # SSLSocket.accept() performs the handshake before HTTP handling.
+            # Log only local listener and error class: not client IP or tokens.
+            LOG.warning("TCP/TLS accept failed port=%s error_type=%s",
+                        self.server_port, type(exc).__name__)
             raise
         sock.settimeout(30)
+        if isinstance(sock, ssl.SSLSocket):
+            LOG.info("TLS handshake OK port=%s protocol=%s alpn=%s",
+                     self.server_port, sock.version(), sock.selected_alpn_protocol())
+        else:
+            LOG.info("TCP accepted port=%s TLS=False", self.server_port)
         return sock, addr
 
 
@@ -211,6 +215,12 @@ def make_server(host, port, app, cert=None, key=None):
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.set_alpn_protocols(["http/1.1"])
         ctx.load_cert_chain(str(cert), str(key))
+        # SNI presence is useful when comparing main versus research, but
+        # hostname strings could contain private or attacker-controlled data.
+        def sni_seen(sock, requested_name, ssl_context):
+            LOG.info("TLS SNI port=%s present=%s",
+                     port, requested_name is not None)
+        ctx.set_servername_callback(sni_seen)
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     return server
 
