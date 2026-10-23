@@ -23,6 +23,15 @@ class Sessions:
     identities = {"queue-test": Identity()}
     queue = FakeQueue()
 
+    def resolve_refresh_tokens(self, tokens):
+        import hmac
+        identity = self.identities["queue-test"]
+        allowed = (identity.auth, identity.diagnostic, identity.access)
+        if not tokens or not all(any(hmac.compare_digest(t, a) for a in allowed)
+                                 for t in tokens):
+            raise ValueError("Unrecognized refresh tokens")
+        return identity
+
 
 class PostLoginTests(unittest.TestCase):
     def test_wire_results(self):
