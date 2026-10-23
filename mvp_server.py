@@ -71,7 +71,14 @@ def read_routes(config_path: Path):
                 if data["provider_environment"] not in (None, "Dev", "Retail"):
                     raise ValueError("invalid provider environment test value")
             elif route in POST_LOGIN_ROUTES and conf["handler"] == POST_LOGIN_ROUTES[route]:
-                data = {"post_login_handler": conf["handler"]}
+                dc_ids = conf.get("datacenter_ids")
+                if dc_ids is not None and (not isinstance(dc_ids, list) or
+                        not dc_ids or len(dc_ids) > 16 or
+                        any(not isinstance(i, str) or not i for i in dc_ids) or
+                        len(set(dc_ids)) != len(dc_ids)):
+                    raise ValueError("invalid datacenter_ids in experimental route")
+                data = {"post_login_handler": conf["handler"],
+                        "datacenter_ids": dc_ids}
             else:
                 raise ValueError("unsupported handler")
         elif "response_hex" in conf:
@@ -169,7 +176,8 @@ def make_handler(app):
                 return self.reply(answer[0], data)
             if path in POST_LOGIN_ROUTES and isinstance(answer[1], dict):
                 try:
-                    data, info = app.post_login.respond(path, raw)
+                    data, info = app.post_login.respond(
+                        path, raw, datacenter_ids=answer[1].get("datacenter_ids"))
                 except ValueError as exc:
                     LOG.warning("Experimental post-login request rejected on %s: %s", path, exc)
                     return self.reply(400, b"Invalid experimental RPC", "text/plain")
