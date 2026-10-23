@@ -1,0 +1,157 @@
+{
+  "c928398a5e4b4debb4099f62383eb196.svc/44829c126af14aeb9f535e504fa413ee": {
+    "handler": "environment_list",
+    "address": "wwz-production.wwzapi.com",
+    "port": 11704,
+    "name": "prod-Master-https",
+    "environment_id": "prod-Master-https",
+    "region": "West Europe",
+    "include_retcode": false,
+    "include_maintenance_flag": false,
+    "date_ms": "now",
+    "datacenters": [
+      {
+        "id": "WWZ-EA",
+        "display": "East Asia",
+        "locale": "en-US",
+        "endpoints": [
+          {
+            "name": "WWZ-EA",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-EA",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-EA",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          }
+        ]
+      },
+      {
+        "id": "WWZ-EU",
+        "display": "Europe",
+        "locale": "en-US",
+        "endpoints": [
+          {
+            "name": "WWZ-EU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-EU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-EU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-EU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          }
+        ]
+      },
+      {
+        "id": "WWZ-US",
+        "display": "North America",
+        "locale": "en-US",
+        "endpoints": [
+          {
+            "name": "WWZ-US",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-US",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-US",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-US",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          }
+        ]
+      },
+      {
+        "id": "WWZ-AU",
+        "display": "East Australia",
+        "locale": "en-US",
+        "endpoints": [
+          {
+            "name": "WWZ-AU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-AU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          },
+          {
+            "name": "WWZ-AU",
+            "address": "192.168.137.1",
+            "port": 50000,
+            "protocol": 4
+          }
+        ]
+      }
+    ]
+  },
+  "0ae806e0260340fe86eb38ff8708252f.svc/3ad39ec0971940b98e522d40229704b9": {
+    "handler": "enqueue"
+  },
+  "0ae806e0260340fe86eb38ff8708252f.svc/c4504538d0ca4b2fb2a9e87f0091f97e": {
+    "handler": "dequeue",
+    "address": "192.168.137.1",
+    "port": 11704,
+    "name": "prod-Master-https"
+  },
+  "772eb3c6037845daa9ab86137203ccf2.svc/c5aca06ab450401d9c1b3a9c522ba3f0": {
+    "handler": "heartbeat_register"
+  },
+  "772eb3c6037845daa9ab86137203ccf2.svc/e000e353458e4062b8bf7ebe912b225d": {
+    "handler": "heartbeat_update"
+  },
+  "772eb3c6037845daa9ab86137203ccf2.svc/2b7cf45af675422d99bfc316ee316319": {
+    "handler": "heartbeat_unregister"
+  },
+  "6c60c0f72c1343a385bd02b2b311f402.svc/096a2aba96f44f37802915dc1164746b": {
+    "handler": "datacenter_occupation"
+  },
+  "b89429154e224660837a4a307391b0b4.svc/dd280c97b0384ad9907571558151b40c": {
+    "handler": "presence_connect"
+  },
+  "fb383fc41afb42ce8c3f91bf828ce5a6.svc/c81bf7e6e43e4f39b1c7256651eb3576": {
+    "handler": "refresh_tokens"
+  },
+  "fc8ff9d3e52742f38746806b2ab946a4.svc/cd6d3021266746ffac6a0113e2e89e31": {
+    "handler": "diagnostics_ack"
+  }
+}
