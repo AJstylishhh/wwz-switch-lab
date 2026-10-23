@@ -65,7 +65,8 @@ class PostLogin:
                     return identity
         raise ValueError("Unrecognized refresh tokens")
 
-    def respond(self, path, raw, datacenter_ids=None, presence_available_seconds=0):
+    def respond(self, path, raw, datacenter_ids=None, presence_available_seconds=0,
+                heartbeat_version_values=None):
         kind = ROUTES.get(path)
         if kind is None:
             raise ValueError("Unmapped service")
@@ -76,11 +77,16 @@ class PostLogin:
                     raise ValueError("Missing game version")
                 self.heartbeat_generation = next(v for n, _, v in items if n == 2)
                 self.heartbeat_state = next(v for n, _, v in items if n == 3)
-                return wire.heartbeat_register_result(data_centers=datacenter_ids), {"stage": kind, "poll_ms": 10000}
+                return (wire.heartbeat_register_result(data_centers=datacenter_ids,
+                                                     version_values=heartbeat_version_values),
+                        {"stage": kind, "poll_ms": 10000,
+                         "version_count": len(heartbeat_version_values or [])})
             if kind == "heartbeat_update":
                 self.heartbeat_generation = next((v for n, _, v in items if n == 2), None)
                 self.heartbeat_state = next((v for n, _, v in items if n == 4), None)
-                return wire.heartbeat_update_result(data_centers=datacenter_ids), {"stage": kind}
+                return (wire.heartbeat_update_result(data_centers=datacenter_ids,
+                                                   version_values=heartbeat_version_values),
+                        {"stage": kind, "version_count": len(heartbeat_version_values or [])})
             if kind == "heartbeat_unregister":
                 self.heartbeat_generation = None
                 self.heartbeat_state = None
