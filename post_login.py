@@ -3,7 +3,6 @@
 Single-process test lab; correlation of heartbeat/presence to individual
 users is not yet supported. Do not expose to untrusted networks.
 """
-import hmac
 import logging
 import threading
 from wwz_wire import fields
@@ -58,16 +57,9 @@ class PostLogin:
         self.diagnostic_packs = 0
 
     def _identity_for_tokens(self, tokens):
-        # All supplied tokens must belong to the same locally-issued session.
-        with self.auth_sessions.lock:
-            for queue_token, identity in self.auth_sessions.identities.items():
-                if not self.auth_sessions.queue.recognizes(queue_token):
-                    continue
-                allowed = (identity.auth, identity.diagnostic, identity.access)
-                if all(any(hmac.compare_digest(t, known) for known in allowed)
-                       for t in tokens):
-                    return identity
-        raise ValueError("Unrecognized refresh tokens")
+        # Queue ticket expiry must not invalidate a previously authenticated
+        # session. AuthSessions owns its independent bounded refresh lifetime.
+        return self.auth_sessions.resolve_refresh_tokens(tokens)
 
     def respond(self, path, raw, datacenter_ids=None, presence_available_seconds=0,
                 heartbeat_version_values=None):
