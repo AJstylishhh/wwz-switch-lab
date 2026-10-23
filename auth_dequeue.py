@@ -54,7 +54,8 @@ class Identity:
     provider_user: str
 
 
-def encode_signin(identity, services, *, address, port, name, provider_environment=None):
+def encode_signin(identity, services, *, address, port, name, provider_environment=None,
+                  provider_has_subscription=None):
     """SignInResult in ServiceResult_SignInResult (field 323326796)."""
     if not (isinstance(address, str) and address and isinstance(name, str) and
             name and 1 <= int(port) <= 65535):
@@ -70,13 +71,21 @@ def encode_signin(identity, services, *, address, port, name, provider_environme
     guid = b"\x09" + binary[:8] + b"\x11" + binary[8:]
     data += blob(8, blob(1, guid))  # SignInResult.User.Uid (bcl.Guid)
     data += string(9, identity.provider_user)
-    if provider_environment is not None:
+    if provider_has_subscription is not None and type(provider_has_subscription) is not bool:
+        raise ValueError("provider_has_subscription must be a boolean or null")
+    if provider_environment is not None or provider_has_subscription is not None:
         environment_enum = {"Dev": 1, "Retail": 2}
-        if provider_environment not in environment_enum:
+        if provider_environment not in (None, *environment_enum):
             raise ValueError("unknown test provider environment")
-        # SignInResult.ProviderInfo=10 -> ProviderOptionalInfo.Environment=2.
-        # Deliberately do NOT synthesize HasSubscription=1.
-        data += blob(10, scalar(2, environment_enum[provider_environment]))
+        # SignInResult.ProviderInfo=10, ProviderOptionalInfo.HasSubscription=1.
+        # Disabled by default. Opt-in simulation is not proof of a Nintendo
+        # subscription and cannot replace the console's system-side checks.
+        optional_info = b""
+        if provider_has_subscription is not None:
+            optional_info += scalar(1, int(provider_has_subscription))
+        if provider_environment is not None:
+            optional_info += scalar(2, environment_enum[provider_environment])
+        data += blob(10, optional_info)
     return scalar(1, 0) + blob(SIGNIN_RESULT_FIELD, blob(1, data))
 
 
@@ -121,7 +130,8 @@ class AuthSessions:
                     return identity
         raise ValueError("Unrecognized refresh tokens")
 
-    def respond(self, raw, *, address, port, name, provider_environment=None):
+    def respond(self, raw, *, address, port, name, provider_environment=None,
+                provider_has_subscription=None):
         token, services = parse_dequeue(raw)
         # Queue ticket is checked *only* for the initial Dequeue.
         if not self.queue.recognizes(token):
@@ -145,6 +155,7 @@ class AuthSessions:
             self.expirations[token] = now + self.session_ttl
             response = encode_signin(
                 ident, services, address=address, port=port, name=name,
-                provider_environment=provider_environment)
+                provider_environment=provider_environment,
+                provider_has_subscription=provider_has_subscription)
             return response, {"service_versions": len(services),
                               "endpoints": len(set((name, *services)))}
