@@ -4,9 +4,13 @@ Single-process test lab; correlation of heartbeat/presence to individual
 users is not yet supported. Do not expose to untrusted networks.
 """
 import hmac
+import logging
 import threading
 from wwz_wire import fields
+from diagnostic_live import safe_live_summary
 import post_login_wire as wire
+
+LOG = logging.getLogger("wwz.mvp")
 
 ROUTES = {
     wire.HEARTBEAT_REGISTER: "heartbeat_register",
@@ -109,7 +113,17 @@ class PostLogin:
                         {"stage": kind, "tokens": len(tokens)})
             if kind == "diagnostics_ack":
                 self.diagnostic_packs += 1
-                # The handler discards telemetry. The optional global --capture-dir
-                # still stores raw requests on the test PC when explicitly enabled.
+                # Diagnose while receiving the client's WriteADFPack; no need
+                # to enable --capture-dir or store tokens/raw messages on disk.
+                # ADF packs may include string tables: markers are *possible*
+                # errors, not proof an error was actually raised.
+                try:
+                    summary = safe_live_summary(raw)
+                    LOG.info("Client diagnostic pack (strings NOT confirmed as errors): %s",
+                             summary)
+                except (ValueError, TypeError, OSError):
+                    # Corrupt/unsupported ADF must never turn a successful
+                    # diagnostics ACK into an HTTP 400 or expose raw payloads.
+                    LOG.warning("Client diagnostic pack could not be inspected safely")
                 return wire.result(), {"stage": kind, "acknowledged_packs": self.diagnostic_packs}
         raise AssertionError("Unreachable")
