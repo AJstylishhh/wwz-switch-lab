@@ -104,6 +104,48 @@ class ClientSessionIdentityTests(unittest.TestCase):
                          (lambda r: (r[0], r[1]["identity_resolution"]))(
                              self.idx.resolve("new-net", {})))
 
+    def test_acl_token_header_identifies_two_same_nat_sessions_when_issued(self):
+        a, b = identity(17), identity(18)
+        one, _ = self.idx.attach("same-ip", a)
+        two, _ = self.idx.attach("same-ip", b)
+        self.assertNotEqual(one, two)
+        resolved_a, diagnostic_a = self.idx.resolve("same-ip", {"acl-token": a.auth})
+        resolved_b, diagnostic_b = self.idx.resolve("same-ip", {"Acl-Token": b.access})
+        self.assertEqual(one, resolved_a)
+        self.assertEqual(two, resolved_b)
+        self.assertEqual("issued_token", diagnostic_a["identity_resolution"])
+        self.assertEqual("issued_token", diagnostic_b["identity_resolution"])
+        with self.assertRaisesRegex(UnresolvedClient, "unrecognized"):
+            self.idx.resolve("same-ip", {"Acl-Token": "third-party-unverified"})
+        # Sender-controlled or pre-sign-in ACL headers are not valid credentials.
+        self.assertEqual(2, len(self.idx.sessions))
+
+    def test_acl_diagnostic_reports_only_classification_and_ephemeral_fingerprint(self):
+        from mvp_server import App
+        from auth_dequeue import Identity
+        app = App({}, trace_acl_match=True)
+        issued = Identity("lab-auth-test", "lab-diagnostic-test",
+                          "lab-access-test", "lab-provider-test",
+                          UUID(int=17), "lab-user")
+        with app.auth_sessions.lock:
+            app.auth_sessions.identities["fake-queue"] = issued
+            app.auth_sessions.expirations["fake-queue"] = (
+                app.auth_sessions.clock() + 3600)
+        for name, token, expected in (
+                ("Acl-Token", issued.auth, "authorization"),
+                ("acl-token", issued.access, "access_role"),
+                ("Acl-Token", issued.diagnostic, "diagnostic"),
+                ("Acl-Token", issued.provider, "provider"),
+                ("Acl-Token", "unrecognized-private-value", "unrecognized")):
+            result, tag = app.acl_probe({name: token})
+            self.assertTrue(result["acl_present"])
+            self.assertEqual(expected, result["issued_token_type"])
+            self.assertEqual(12, len(tag))
+            self.assertNotIn(token, str(result))
+        absent, tag = app.acl_probe({})
+        self.assertEqual("absent", absent["issued_token_type"])
+        self.assertEqual("absent", tag)
+
     def test_names_only_probe_does_not_log_values_or_unsafe_names(self):
         headers = {
             "Authorization": "Bearer THIS_IS_A_SECRET",
