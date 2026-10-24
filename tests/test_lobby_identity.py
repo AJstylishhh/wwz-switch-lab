@@ -11,7 +11,7 @@ from uuid import UUID
 from enable_lobby_rpc_probe import with_probe_routes
 from enable_presence_menu_probe import add_probe_routes
 from enable_presence_status_probe import modify_routes
-from lobby_identity import ClientSessionIndex, UnresolvedClient
+from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names
 from lobby_registry import LobbyRegistry, HANDLERS
 from mvp_server import App, Server, make_handler, read_routes
 from wwz_wire import blob, scalar, string
@@ -103,6 +103,20 @@ class ClientSessionIdentityTests(unittest.TestCase):
         self.assertEqual((sid, "unique_source"),
                          (lambda r: (r[0], r[1]["identity_resolution"]))(
                              self.idx.resolve("new-net", {})))
+
+    def test_names_only_probe_does_not_log_values_or_unsafe_names(self):
+        headers = {
+            "Authorization": "Bearer THIS_IS_A_SECRET",
+            "X-Game-Session": "my-private-session",
+            "X-My-Token": "private",
+            "Content-Type": "application/protobuf",
+            "X-" + "A"*100: "bad",
+        }
+        hints = candidate_header_names(headers)
+        self.assertEqual(["authorization", "x-game-session", "x-my-token"], hints)
+        self.assertNotIn("THIS_IS_A_SECRET", str(hints))
+        self.assertNotIn("private", str(hints))
+        self.assertNotIn("content-type", str(hints))
 
     def test_expired_sessions_and_invalid_config(self):
         a = identity(17)
