@@ -133,7 +133,8 @@ class App:
                  trace_header_names=False, trace_acl_match=False,
                  trace_post_match_users=False, experimental_public_user_data=False,
                  lobby_version_pulse=False, public_lobby_discovery=False,
-                 trace_playlist_labels=False, lab_cross_playlist_probe=False):
+                 trace_playlist_labels=False, lab_cross_playlist_probe=False,
+                 profile_grace_seconds=0, experimental_presence_empty_acks=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -143,7 +144,11 @@ class App:
         self.auth_sessions = AuthSessions(self.queue)
         self.post_login = PostLogin(self.auth_sessions)
         # Explicit opt-in. Default route table remains unchanged.
-        self.lobby_registry = LobbyRegistry() if lobby_mvp else None
+        if profile_grace_seconds and not (lobby_mvp and lobby_session_ids and
+                                          experimental_public_user_data):
+            raise ValueError("profile grace requires --lobby-mvp --lobby-session-ids and --experimental-public-user-data")
+        self.lobby_registry = (LobbyRegistry(profile_grace_seconds=profile_grace_seconds)
+                               if lobby_mvp else None)
         if lobby_session_ids and not lobby_mvp:
             raise ValueError("lobby_session_ids requires lobby_mvp")
         # Optional session-safe routing: one public IP may have many logins.
@@ -165,6 +170,9 @@ class App:
         if lab_cross_playlist_probe and not (public_lobby_discovery and lobby_session_ids):
             raise ValueError("lab_cross_playlist_probe requires --public-lobby-discovery and --lobby-session-ids")
         self.lab_cross_playlist_probe = lab_cross_playlist_probe
+        if experimental_presence_empty_acks and not (lobby_mvp and lobby_session_ids):
+            raise ValueError("experimental_presence_empty_acks requires --lobby-mvp and --lobby-session-ids")
+        self.experimental_presence_empty_acks = experimental_presence_empty_acks
         self.trace_playlist_labels = trace_playlist_labels
         self._pulse_seen = set()
         self._pulse_lock = threading.Lock()
@@ -370,6 +378,28 @@ def make_handler(app):
                     LOG.info("Unimplemented RedLynx environment request shape: %s",
                              unknown_request_summary(path, raw))
                 return self.reply(404, b"Invalid RPC path", "text/plain")
+            if (app.experimental_presence_empty_acks and path in (
+                    "/b89429154e224660837a4a307391b0b4.svc/a5849554ff43457e88339d6a58fd6116",
+                    "/b89429154e224660837a4a307391b0b4.svc/f05e89628988405c89a51dc520957cae")):
+                # The game invokes these zero-argument Presence methods
+                # near match setup/teardown. GUID -> semantic method mapping
+                # is not yet known. Test only whether 404 itself is blocking.
+                if raw:
+                    return self.reply(400, b"Empty Presence payload required", "text/plain")
+                try:
+                    source_key = app.source_key(self.client_address[0])
+                    session_key, resolution = app.lobby_sessions.resolve(
+                        source_key, self.headers)
+                    if resolution["identity_resolution"] != "issued_token":
+                        raise ValueError("issued client token required")
+                    with app.lobby_registry.lock:
+                        app.lobby_registry._require(session_key)
+                except (ValueError, UnresolvedClient, KeyError):
+                    return self.reply(409, b"Authenticated lab user required", "text/plain")
+                LOG.info("Experimental unknown Presence empty ACK: %s",
+                         {"method_suffix": path.rsplit("/", 1)[-1][:8],
+                          "session_tag": resolution["session_tag"]})
+                return self.reply(200, b"\x08\x00")
             if app.experimental_public_user_data and path == POST_MATCH_USER_LOOKUP_CANDIDATE:
                 # Candidate GUID-to-method mapping: only serve authenticated
                 # users who already share the same in-memory lab lobby.
@@ -383,15 +413,12 @@ def make_handler(app):
                     if resolution["identity_resolution"] != "issued_token":
                         raise ValueError("verified issued credential required")
                     with app.lobby_registry.lock:
-                        group = app.lobby_registry._group(session_key)
-                        if group is None or session_key not in group.members:
-                            raise ValueError("requester is not in a lab lobby")
-                        member_identities = {
-                            app.lobby_registry.identities[sid].user_guid:
-                            app.lobby_registry.identities[sid]
-                            for sid in group.members
-                        }
+                        member_identities, membership_scope = (
+                            app.lobby_registry.profile_identities_for(session_key))
+                        if not member_identities:
+                            raise ValueError("requester has no verified lab peers")
                         data, info = public_user_data_reply(raw, member_identities)
+                        info["membership_scope"] = membership_scope
                 except (ValueError, KeyError, UnicodeDecodeError):
                     # Keep original unknown-RPC semantics, without an identity
                     # oracle for unknown/signed-out or unrelated users.
@@ -573,6 +600,10 @@ def main():
                     help="log only bounded safe ASCII matchmaking playlist identifiers to distinguish modes")
     ap.add_argument("--lobby-version-pulse", action="store_true",
                     help="experimental: pulse select nine-entry heartbeat version slots after verified shared-roster changes")
+    ap.add_argument("--profile-grace-seconds", type=int, default=0,
+                    help="with experimental public user data, retain verified previous match peers for 0..30 seconds after Stop")
+    ap.add_argument("--experimental-presence-empty-acks", action="store_true",
+                    help="opt-in 200 success for exactly two observed empty Presence RPCs, identity-gated; method semantics unknown")
     ap.add_argument("--experimental-public-user-data", action="store_true",
                     help="with --lobby-mvp --lobby-session-ids, typed synthetic profile response for verified same-lobby users")
     ap.add_argument("--trace-post-match-users", action="store_true",
@@ -602,7 +633,9 @@ def main():
               lobby_version_pulse=args.lobby_version_pulse,
               public_lobby_discovery=args.public_lobby_discovery,
               trace_playlist_labels=args.trace_playlist_labels,
-              lab_cross_playlist_probe=args.lab_cross_playlist_probe)
+              lab_cross_playlist_probe=args.lab_cross_playlist_probe,
+              profile_grace_seconds=args.profile_grace_seconds,
+              experimental_presence_empty_acks=args.experimental_presence_empty_acks)
     servers = []
     try:
         for port in ports:
