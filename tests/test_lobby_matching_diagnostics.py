@@ -45,6 +45,22 @@ class LobbyMatchingDiagnosticsTests(unittest.TestCase):
         self.assertEqual(2, b["members"])
         self.assertEqual(1, b["group_count"])
 
+    def test_subsequent_start_in_shared_group_reports_still_matched(self):
+        self.reg.respond("A", START, match_request("party-join"))
+        _, first = self.reg.respond("B", START, match_request("party-join"))
+        self.assertEqual("joined_existing_queue", first["decision"])
+        self.assertEqual(2, first["members"])
+        for source in ("A", "B"):
+            with self.subTest(source=source):
+                before_group = self.reg.member_group[source]
+                reply, again = self.reg.respond(
+                    source, START, match_request("party-join"))
+                self.assertEqual("already_in_shared_queue", again["decision"])
+                self.assertEqual(2, again["members"])
+                self.assertEqual(1, again["group_count"])
+                self.assertEqual(before_group, self.reg.member_group[source])
+                self.assertEqual(bytes((8, 0)), reply)
+
     def test_a_real_one_seat_limit_is_reported_not_silently_bypassed(self):
         _, settings = self.reg.respond("A", SETTINGS, blob(1, scalar(1, 1)))
         self.assertEqual(1, settings["max_count"])
