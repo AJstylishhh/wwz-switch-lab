@@ -88,9 +88,9 @@ class LobbyVersionPulseTests(unittest.TestCase):
         self.assertEqual(expected, lookup(a))
         self.assertEqual(expected, lookup(b))
         self.assertEqual(tuple(BASE), lookup(c))
-        self.assertEqual(tuple(BASE), app.heartbeat_versions_for(
+        self.assertEqual(BASE, app.heartbeat_versions_for(
             "127.0.0.1", {"Acl-Token": "bad"}, BASE))
-        self.assertEqual(tuple(BASE), app.heartbeat_versions_for(
+        self.assertEqual(BASE, app.heartbeat_versions_for(
             "127.0.0.1", {}, BASE))  # same public IP must NOT suffice
         app.lobby_registry.respond(ids[a.user_guid], GAMEDATA, string(1, "new metadata"))
         self.assertEqual(expected, lookup(a))
