@@ -27,7 +27,7 @@ from auth_dequeue import DEQUEUE_ROUTE, AuthSessions, parse_dequeue
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
-from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names
+from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -163,7 +163,7 @@ class App:
 
     def acl_probe(self, headers):
         """Only ephemeral keyed fingerprint and match type; never token bytes."""
-        acl = headers.get("Acl-Token")
+        acl = get_header(headers, "Acl-Token")
         if acl is None or not acl.strip():
             return {"acl_present": False, "issued_token_type": "absent"}, "absent"
         acl = acl.strip()
