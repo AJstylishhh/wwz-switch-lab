@@ -126,7 +126,7 @@ def read_routes(config_path: Path):
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
                  trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
-                 trace_header_names=False):
+                 trace_header_names=False, trace_acl_match=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -142,6 +142,8 @@ class App:
         # Optional session-safe routing: one public IP may have many logins.
         self.lobby_sessions = ClientSessionIndex() if lobby_session_ids else None
         self.trace_header_names = trace_header_names
+        self.trace_acl_match = trace_acl_match
+        self._acl_probe_seen = set()
         self._header_probe_seen = set()
         self._header_probe_lock = threading.Lock()
         if capture_dir is not None:
@@ -159,6 +161,31 @@ class App:
                            ("lobby-peer\0" + ip).encode("utf-8"),
                            hashlib.sha256)[:16].hex()
 
+    def acl_probe(self, headers):
+        """Only ephemeral keyed fingerprint and match type; never token bytes."""
+        acl = headers.get("Acl-Token")
+        if acl is None or not acl.strip():
+            return {"acl_present": False, "issued_token_type": "absent"}, "absent"
+        acl = acl.strip()
+        if len(acl) > 512:
+            return {"acl_present": True, "issued_token_type": "oversized"}, "oversized"
+        tag = hmac.digest(self._trace_key, ("acl-token\\0" + acl).encode("utf-8"),
+                          hashlib.sha256)[:6].hex()
+        matching_types = set()
+        with self.auth_sessions.lock:
+            self.auth_sessions._prune_locked(self.auth_sessions.clock())
+            for identity in self.auth_sessions.identities.values():
+                for kind, value in (("authorization", identity.auth),
+                                    ("access_role", identity.access),
+                                    ("diagnostic", identity.diagnostic),
+                                    ("provider", identity.provider)):
+                    if hmac.compare_digest(acl, value):
+                        matching_types.add(kind)
+        matched = next(iter(matching_types)) if len(matching_types) == 1 else (
+            "unrecognized" if not matching_types else "multiple")
+        return {"acl_present": True, "acl_tag": tag,
+                "issued_token_type": matched}, tag
+
     def observation_label(self, ip, headers):
         if not self.trace_clients:
             return ""
@@ -169,7 +196,7 @@ class App:
         # Users behind the same NAT may share an address label.
         label = " source_tag=" + tag("ip", ip)
         for name in ("Authorization", "AuthorizationToken", "X-Auth-Token",
-                     "X-Access-Token", "X-Authorization", "Cookie"):
+                     "X-Access-Token", "X-Authorization", "Acl-Token", "Cookie"):
             secret = headers.get(name)
             if secret:
                 # Never print the header value, only keyed ephemeral digest.
@@ -228,6 +255,19 @@ def make_handler(app):
                 return
             LOG.info("POST %s port=%s bytes=%s%s", path, self.server.server_port,
                      length, app.observation_label(self.client_address[0], self.headers))
+            if app.trace_acl_match and (
+                    path == DEQUEUE_ROUTE or
+                    (path in LOBBY_HANDLERS and
+                     LOBBY_HANDLERS[path] in ("start", "squad_status", "match_status"))):
+                report, token_tag = app.acl_probe(self.headers)
+                event_key = (app.source_key(self.client_address[0]), path, token_tag)
+                with app._header_probe_lock:
+                    first_acl = (len(app._acl_probe_seen) < 512 and
+                                 event_key not in app._acl_probe_seen)
+                    if first_acl:
+                        app._acl_probe_seen.add(event_key)
+                if first_acl:
+                    LOG.info("ACL token correlation: path=%s %s", path, report)
             if app.trace_header_names and (
                     path == DEQUEUE_ROUTE or
                     (path in LOBBY_HANDLERS and
@@ -396,6 +436,8 @@ def main():
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--trace-header-names", action="store_true",
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
+    ap.add_argument("--trace-acl-match", action="store_true",
+                    help="diagnose whether observed acl-token matches server-issued tokens; keyed ephemeral tag only, no values; responses unchanged")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
     ap.add_argument("--key", type=Path, default=Path(__file__).parent / "certs" / "server.key")
     ap.add_argument("--max-body", type=int, default=2_000_000)
@@ -412,7 +454,8 @@ def main():
     app = App(read_routes(args.routes), args.capture_dir, args.max_body,
               trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp,
               lobby_session_ids=args.lobby_session_ids,
-              trace_header_names=args.trace_header_names)
+              trace_header_names=args.trace_header_names,
+              trace_acl_match=args.trace_acl_match)
     servers = []
     try:
         for port in ports:
