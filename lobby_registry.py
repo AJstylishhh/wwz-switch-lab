@@ -106,6 +106,9 @@ class Lobby:
     # Incremented only when a participant joins or leaves. Unlike version,
     # this ignores noisy GameData and invite updates from the game loop.
     roster_revision: int = 0
+    # For the explicitly forced two-client lab probe only. Without it,
+    # mismatched playlists must NEVER be silently considered compatible.
+    requested_playlists: dict[str, str] = field(default_factory=dict)
 
 
 class LobbyRegistry:
@@ -199,6 +202,7 @@ class LobbyRegistry:
         if group is None:
             return
         group.members.remove(source)
+        group.requested_playlists.pop(source, None)
         self.member_group.pop(source, None)
         if not group.members:
             self.groups.pop(group.lid, None)
@@ -277,7 +281,8 @@ class LobbyRegistry:
             status += scalar(10, self._size(group))
         return scalar(1, group.version if group else 0) + blob(4, status)
 
-    def respond(self, source: str, path: str, raw: bytes, *, public_discovery=False):
+    def respond(self, source: str, path: str, raw: bytes, *,
+                public_discovery=False, cross_playlist_probe=False):
         kind = HANDLERS.get(path)
         if kind is None:
             raise ValueError("unknown lobby handler")
@@ -318,7 +323,10 @@ class LobbyRegistry:
                 # Likewise an inactive shared party is not proof that every
                 # participant agreed to restart matchmaking.
                 if group is not None and len(group.members) > 1 and (
-                    not group.queued or group.playlist != playlist
+                    not group.queued or
+                    (group.playlist != playlist and not
+                     (cross_playlist_probe and
+                      group.requested_playlists.get(source) == playlist))
                 ):
                     group = self._detach_to_solo(source, group)
                     details["detached_for_new_search"] = True
@@ -332,6 +340,19 @@ class LobbyRegistry:
                 available = [g for g in compatible if len(g.members) < self._size(g)]
                 candidate = min(available, key=lambda g: (g.created, g.lid.int),
                                 default=None)
+                # Intentionally NOT normal matchmaking. Force exactly two
+                # independently searching solo labs to correlate only when
+                # no exact playlist match exists. This allows one controlled
+                # hardware run to test state delivery, not mode compatibility.
+                forced_candidate = None
+                if (cross_playlist_probe and not candidate and len(others) == 1
+                        and group is not None and len(group.members) == 1
+                        and group.queued and group.playlist == playlist):
+                    other = others[0]
+                    if len(other.members) == 1 and len(other.members) < self._size(other):
+                        forced_candidate = other
+                if forced_candidate is not None:
+                    candidate = forced_candidate
                 details.update({
                     "playlist_tag": self._playlist_tag(playlist),
                     "playlist_bytes": len(playlist.encode("utf-8")),
@@ -342,10 +363,16 @@ class LobbyRegistry:
                 if candidate:
                     self._join_queue(source, candidate)
                     group = candidate
-                    details["decision"] = "joined_existing_queue"
+                    group.requested_playlists[source] = playlist
+                    if forced_candidate is not None:
+                        details["decision"] = "experimental_cross_playlist_pair"
+                        details["forced_cross_playlist"] = True
+                    else:
+                        details["decision"] = "joined_existing_queue"
                 else:
                     group = group or self._group(source, create=True)
                     group.playlist = playlist
+                    group.requested_playlists[source] = playlist
                     group.queued = True
                     self._touch(group)
                     details["decision"] = ("no_other_queue" if not others else
@@ -356,7 +383,9 @@ class LobbyRegistry:
                 # group should not be misleadingly reported as no_other_queue.
                 # This only refines diagnostics, not lobby/response behavior.
                 if group.queued and len(group.members) > 1 and source in group.members:
-                    details["decision"] = ("joined_existing_queue" if candidate else
+                    details["decision"] = ("experimental_cross_playlist_pair"
+                                           if forced_candidate is not None else
+                                           "joined_existing_queue" if candidate else
                                            "already_in_shared_queue")
             elif kind == "stop":
                 if raw:
