@@ -43,3 +43,20 @@ Expected server events: both clients sign in, one `joined_existing_queue` with `
 If anything breaks, remove `--lobby-version-pulse`. Remove `--experimental-public-user-data` too to restore the original profile-RPC 404 behavior. No settings or saved player data are changed.
 
 **Limitations:** The version slot-to-lobby mapping, server push semantics, real game session allocation and gameplay transport are still unverified. Keep raw logs and user credentials out of the public repository.
+
+## Additional read-only pulse acknowledgment signal
+
+Archived client traffic contains **265 Heartbeat.Update request bodies**, all
+with exactly nine client-supplied `UserVersions` entries. Every value in
+that specific archived set is `8802288`, the baseline fixture we currently
+return. This is separate from, and consistent with, the nine-entry NSO check.
+
+The same optional feature now also examines only the nine numeric values in
+the client's Heartbeat.Update field 5 (without logging any raw payloads).
+After the first roster revision it logs
+`client_reports_baseline` and `client_reports_pulsed` booleans along with
+`client_reported_entries`. A change to `client_reports_pulsed: True`
+on a subsequent update would be evidence the client adopted the new vector.
+No matching status RPC despite such an acknowledgment would narrow the
+problem to semantic version-slot mapping or another matchmaking transition.
+These observations are de-duplicated per authenticated session and revision.
