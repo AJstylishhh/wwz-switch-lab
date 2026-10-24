@@ -28,6 +28,7 @@ from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 from request_shape import (unknown_request_summary, REDLYNX_ENVIRONMENT,
                            POST_MATCH_USER_LOOKUP_CANDIDATE)
 from post_match_user_probe import classify_lookup
+from public_user_data import public_user_data_reply
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
 from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
@@ -129,7 +130,7 @@ class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
                  trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
                  trace_header_names=False, trace_acl_match=False,
-                 trace_post_match_users=False):
+                 trace_post_match_users=False, experimental_public_user_data=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -147,6 +148,9 @@ class App:
         self.trace_header_names = trace_header_names
         self.trace_acl_match = trace_acl_match
         self.trace_post_match_users = trace_post_match_users
+        if experimental_public_user_data and not (lobby_mvp and lobby_session_ids):
+            raise ValueError("experimental_public_user_data requires --lobby-mvp and --lobby-session-ids")
+        self.experimental_public_user_data = experimental_public_user_data
         self._acl_probe_seen = set()
         self._header_probe_seen = set()
         self._header_probe_lock = threading.Lock()
@@ -304,6 +308,31 @@ def make_handler(app):
                     LOG.info("Unimplemented RedLynx environment request shape: %s",
                              unknown_request_summary(path, raw))
                 return self.reply(404, b"Invalid RPC path", "text/plain")
+            if app.experimental_public_user_data and path == POST_MATCH_USER_LOOKUP_CANDIDATE:
+                # Candidate GUID-to-method mapping: only serve authenticated
+                # users who already share the same in-memory lab lobby.
+                # Never fall back to public IP or arbitrary client-provided IDs.
+                try:
+                    source_key = app.source_key(self.client_address[0])
+                    session_key, _ = app.lobby_sessions.resolve(
+                        source_key, self.headers)
+                    with app.lobby_registry.lock:
+                        group = app.lobby_registry._group(session_key)
+                        if group is None or session_key not in group.members:
+                            raise ValueError("requester is not in a lab lobby")
+                        member_identities = {
+                            app.lobby_registry.identities[sid].user_guid:
+                            app.lobby_registry.identities[sid]
+                            for sid in group.members
+                        }
+                        data, info = public_user_data_reply(raw, member_identities)
+                except (ValueError, KeyError, UnicodeDecodeError):
+                    # Keep original unknown-RPC semantics, without an identity
+                    # oracle for unknown/signed-out or unrelated users.
+                    LOG.info("Experimental public user-data reply: not eligible")
+                    return self.reply(404, b"Unknown RPC", "text/plain")
+                LOG.info("Experimental public user-data reply: %s", info)
+                return self.reply(200, data)
             answer = app.routes.get(path)
             if answer is None:
                 if app.trace_post_match_users and path == POST_MATCH_USER_LOOKUP_CANDIDATE:
@@ -449,6 +478,8 @@ def main():
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--trace-header-names", action="store_true",
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
+    ap.add_argument("--experimental-public-user-data", action="store_true",
+                    help="with --lobby-mvp --lobby-session-ids, typed synthetic profile response for verified same-lobby users")
     ap.add_argument("--trace-post-match-users", action="store_true",
                     help="read-only post-match UserId versus locally issued UserId match counts; responses unchanged")
     ap.add_argument("--trace-acl-match", action="store_true",
@@ -471,7 +502,8 @@ def main():
               lobby_session_ids=args.lobby_session_ids,
               trace_header_names=args.trace_header_names,
               trace_acl_match=args.trace_acl_match,
-              trace_post_match_users=args.trace_post_match_users)
+              trace_post_match_users=args.trace_post_match_users,
+              experimental_public_user_data=args.experimental_public_user_data)
     servers = []
     try:
         for port in ports:
