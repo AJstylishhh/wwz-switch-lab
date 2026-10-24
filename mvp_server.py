@@ -27,7 +27,7 @@ from auth_dequeue import DEQUEUE_ROUTE, AuthSessions, parse_dequeue
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
-from lobby_identity import ClientSessionIndex, UnresolvedClient
+from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -125,7 +125,8 @@ def read_routes(config_path: Path):
 
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
-                 trace_clients=False, lobby_mvp=False, lobby_session_ids=False):
+                 trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
+                 trace_header_names=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -140,6 +141,9 @@ class App:
             raise ValueError("lobby_session_ids requires lobby_mvp")
         # Optional session-safe routing: one public IP may have many logins.
         self.lobby_sessions = ClientSessionIndex() if lobby_session_ids else None
+        self.trace_header_names = trace_header_names
+        self._header_probe_seen = set()
+        self._header_probe_lock = threading.Lock()
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -224,6 +228,21 @@ def make_handler(app):
                 return
             LOG.info("POST %s port=%s bytes=%s%s", path, self.server.server_port,
                      length, app.observation_label(self.client_address[0], self.headers))
+            if app.trace_header_names and (
+                    path == DEQUEUE_ROUTE or
+                    (path in LOBBY_HANDLERS and
+                     LOBBY_HANDLERS[path] in ("start", "squad_status", "match_status"))):
+                # Only request-header *names*, first occurrence per source and
+                # method. Don't expose secret values or spam heartbeat logs.
+                probe_key = (app.source_key(self.client_address[0]), path)
+                with app._header_probe_lock:
+                    first = (len(app._header_probe_seen) < 256 and
+                             probe_key not in app._header_probe_seen)
+                    if first:
+                        app._header_probe_seen.add(probe_key)
+                if first:
+                    LOG.info("Potential auth header names: path=%s names=%s",
+                             path, candidate_header_names(self.headers))
             if path == ENVIRONMENT_ROUTE:
                 try:
                     LOG.info("Environment discovery: %s", describe_environment_request(raw))
@@ -375,6 +394,8 @@ def main():
                     help="opt-in in-memory playlist matching and typed squad/queue status; no gameplay")
     ap.add_argument("--lobby-session-ids", action="store_true",
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
+    ap.add_argument("--trace-header-names", action="store_true",
+                    help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
     ap.add_argument("--key", type=Path, default=Path(__file__).parent / "certs" / "server.key")
     ap.add_argument("--max-body", type=int, default=2_000_000)
@@ -390,7 +411,8 @@ def main():
         ap.error("ports must be distinct")
     app = App(read_routes(args.routes), args.capture_dir, args.max_body,
               trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp,
-              lobby_session_ids=args.lobby_session_ids)
+              lobby_session_ids=args.lobby_session_ids,
+              trace_header_names=args.trace_header_names)
     servers = []
     try:
         for port in ports:
