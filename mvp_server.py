@@ -23,9 +23,10 @@ from urllib.parse import urlsplit
 
 from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment_request
 from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
-from auth_dequeue import DEQUEUE_ROUTE, AuthSessions
+from auth_dequeue import DEQUEUE_ROUTE, AuthSessions, parse_dequeue
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
+from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -123,7 +124,7 @@ def read_routes(config_path: Path):
 
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
-                 trace_clients=False):
+                 trace_clients=False, lobby_mvp=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -132,6 +133,8 @@ class App:
         self.queue = QueueState()
         self.auth_sessions = AuthSessions(self.queue)
         self.post_login = PostLogin(self.auth_sessions)
+        # Explicit opt-in. Default route table remains unchanged.
+        self.lobby_registry = LobbyRegistry() if lobby_mvp else None
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -139,6 +142,13 @@ class App:
             except OSError:
                 pass
 
+
+    def source_key(self, ip):
+        # Stable within this process, uncorrelatable between restarts;
+        # never persist or print the source IP.
+        return hmac.digest(self._trace_key,
+                           ("lobby-peer\0" + ip).encode("utf-8"),
+                           hashlib.sha256)[:16].hex()
 
     def observation_label(self, ip, headers):
         if not self.trace_clients:
@@ -248,6 +258,17 @@ def make_handler(app):
                 except ValueError as exc:
                     LOG.warning("Dequeue rejected: %s", exc)
                     return self.reply(400, b"Invalid queue token or Dequeue request", "text/plain")
+                if app.lobby_registry is not None:
+                    # Only a completed Dequeue may establish a lab user.
+                    token, _ = parse_dequeue(raw)
+                    with app.auth_sessions.lock:
+                        identity = app.auth_sessions.identities[token]
+                    try:
+                        app.lobby_registry.attach(
+                            app.source_key(self.client_address[0]), identity)
+                    except ValueError as exc:
+                        LOG.warning("Lobby user correlation rejected: %s", exc)
+                        return self.reply(503, b"Lobby capacity reached", "text/plain")
                 LOG.info("Experimental Dequeue/SignInResult reply: %s", info)
                 return self.reply(answer[0], data)
             if path in POST_LOGIN_ROUTES and isinstance(answer[1], dict):
@@ -261,6 +282,16 @@ def make_handler(app):
                     return self.reply(400, b"Invalid experimental RPC", "text/plain")
                 LOG.info("Experimental post-login reply: %s", info)
                 return self.reply(answer[0], data)
+            if app.lobby_registry is not None and path in LOBBY_HANDLERS:
+                try:
+                    payload, info = app.lobby_registry.respond(
+                        app.source_key(self.client_address[0]), path, raw)
+                except (ValueError, UnicodeDecodeError) as exc:
+                    LOG.warning("Experimental lobby request rejected on %s: %s",
+                                path, exc)
+                    return self.reply(400, b"Invalid experimental lobby RPC", "text/plain")
+                LOG.info("Experimental lobby registry: %s", info)
+                return self.reply(answer[0], payload)
             self.reply(*answer)
     return Handler
 
@@ -311,6 +342,8 @@ def main():
     ap.add_argument("--capture-dir", type=Path, help="stores raw requests, potentially sensitive")
     ap.add_argument("--trace-clients", action="store_true",
                     help="log ephemeral HMAC tags for source IP / known auth headers; never values")
+    ap.add_argument("--lobby-mvp", action="store_true",
+                    help="opt-in in-memory playlist matching and typed squad/queue status; no gameplay")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
     ap.add_argument("--key", type=Path, default=Path(__file__).parent / "certs" / "server.key")
     ap.add_argument("--max-body", type=int, default=2_000_000)
@@ -325,7 +358,7 @@ def main():
     if not ports or len(set(ports)) != len(ports):
         ap.error("ports must be distinct")
     app = App(read_routes(args.routes), args.capture_dir, args.max_body,
-              trace_clients=args.trace_clients)
+              trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp)
     servers = []
     try:
         for port in ports:
