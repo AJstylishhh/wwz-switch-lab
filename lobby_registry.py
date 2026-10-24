@@ -117,11 +117,16 @@ class LobbyRegistry:
     Source tags identify remote network addresses, not Nintendo users.
     Clients sharing one public IP are deliberately not supported by this MVP.
     """
-    def __init__(self, *, clock=time.monotonic, idle_seconds=IDLE_SECONDS):
+    def __init__(self, *, clock=time.monotonic, idle_seconds=IDLE_SECONDS,
+                 profile_grace_seconds=0):
         if idle_seconds <= 0:
             raise ValueError("invalid idle ttl")
+        if type(profile_grace_seconds) is not int or not 0 <= profile_grace_seconds <= 30:
+            raise ValueError("invalid profile grace; allowed range 0..30 seconds")
         self.clock = clock
         self.idle_seconds = idle_seconds
+        self.profile_grace_seconds = profile_grace_seconds
+        self._recent_pair_profiles = {}  # session -> (absolute monotonic expiry, verified peer identities)
         self.lock = threading.RLock()
         self.identities = {}    # pseudonymous source -> synthetic SignIn Identity
         self.groups = {}        # random UUID -> Lobby
@@ -137,6 +142,9 @@ class LobbyRegistry:
 
     def _expire(self):
         now = self.clock()
+        for sid, (deadline, _) in tuple(self._recent_pair_profiles.items()):
+            if deadline <= now:
+                del self._recent_pair_profiles[sid]
         for lid, group in list(self.groups.items()):
             if now - group.updated > self.idle_seconds:
                 self.groups.pop(lid, None)
@@ -161,6 +169,7 @@ class LobbyRegistry:
                 "previous_lobby_members": len(old_group.members) if old_group else 0,
             }
             if replaced:
+                self._recent_pair_profiles.pop(source, None)
                 # Source is currently the IP-based key, NOT an authenticated
                 # session identifier. A second game instance behind the same
                 # NAT may invalidate this mapping. Surface the event rather
@@ -230,6 +239,40 @@ class LobbyRegistry:
         solo.invites_state = invites
         self._touch(solo)
         return solo
+
+    def _remember_shared_profile_peers(self, group):
+        """Short, server-issued profile lookup grace for existing members only.
+
+        Called before a client-initiated Stop breaks a paired group. It is
+        not renewed by repeated lookups and does not retain raw provider
+        tokens, IPs or user-provided IDs.
+        """
+        if not self.profile_grace_seconds or len(group.members) < 2:
+            return
+        expiry = self.clock() + self.profile_grace_seconds
+        snapshot = {self.identities[sid].user_guid: self.identities[sid]
+                    for sid in group.members}
+        for sid in group.members:
+            self._recent_pair_profiles[sid] = (expiry, snapshot)
+
+    def profile_identities_for(self, source):
+        """Return identities only from a currently shared group or a short
+        *verified previous pair*; never arbitrary server accounts.
+        """
+        with self.lock:
+            self._expire()
+            self._require(source)
+            group = self._group(source)
+            if group is not None and len(group.members) > 1:
+                return ({self.identities[sid].user_guid: self.identities[sid]
+                         for sid in group.members}, "current_pair")
+            recent = self._recent_pair_profiles.get(source)
+            if recent is not None:
+                return dict(recent[1]), "recent_pair"
+            if group is not None:
+                return ({self.identities[sid].user_guid: self.identities[sid]
+                         for sid in group.members}, "current_solo")
+            return {}, "not_in_lobby"
 
     def _size(self, group):
         if not group.settings:
@@ -394,6 +437,7 @@ class LobbyRegistry:
                 details["decision"] = "client_called_stop"
                 if group is not None:
                     if len(group.members) > 1:
+                        self._remember_shared_profile_peers(group)
                         group = self._detach_to_solo(source, group)
                         details["detached_from_shared_queue"] = True
                     else:
