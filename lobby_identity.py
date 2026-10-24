@@ -50,6 +50,15 @@ def candidate_header_names(headers):
     return sorted(set(names))
 
 
+def get_header(headers, name):
+    """Case-insensitive lookup for HTTPMessage and ordinary test mappings."""
+    needle = name.casefold()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.casefold() == needle:
+            return value
+    return None
+
+
 class UnresolvedClient(ValueError):
     """Zero or several candidate sessions, or unrecognized bearer token."""
 
@@ -57,7 +66,7 @@ class UnresolvedClient(ValueError):
 def _candidate_credentials(headers):
     """Yield only known client credential header values, no logs."""
     for name in CREDENTIAL_HEADERS:
-        value = headers.get(name)
+        value = get_header(headers, name)
         if not value:
             continue
         value = value.strip()
