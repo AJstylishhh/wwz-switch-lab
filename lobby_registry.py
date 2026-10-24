@@ -346,6 +346,7 @@ class LobbyRegistry:
                 # hardware run to test state delivery, not mode compatibility.
                 forced_candidate = None
                 if (cross_playlist_probe and not candidate and len(others) == 1
+                        and not details["detached_for_new_search"]
                         and (group is None or len(group.members) == 1)):
                     other = others[0]
                     if len(other.members) == 1 and len(other.members) < self._size(other):
