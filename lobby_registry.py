@@ -308,6 +308,12 @@ class LobbyRegistry:
                                            "playlist_differs" if not compatible else
                                            "matching_queue_full")
                 details["max_count"] = self._size(group)
+                # A repeat MatchmakeStart from someone already in a matched
+                # group should not be misleadingly reported as no_other_queue.
+                # This only refines diagnostics, not lobby/response behavior.
+                if group.queued and len(group.members) > 1 and source in group.members:
+                    details["decision"] = ("joined_existing_queue" if candidate else
+                                           "already_in_shared_queue")
             elif kind == "stop":
                 if raw:
                     raise ValueError("MatchmakeStop should have no fields")
