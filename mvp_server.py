@@ -314,8 +314,12 @@ def make_handler(app):
                 # Never fall back to public IP or arbitrary client-provided IDs.
                 try:
                     source_key = app.source_key(self.client_address[0])
-                    session_key, _ = app.lobby_sessions.resolve(
+                    session_key, resolution = app.lobby_sessions.resolve(
                         source_key, self.headers)
+                    # This experimental endpoint never accepts IP-only
+                    # affinity, even after a previous authenticated request.
+                    if resolution["identity_resolution"] != "issued_token":
+                        raise ValueError("verified issued credential required")
                     with app.lobby_registry.lock:
                         group = app.lobby_registry._group(session_key)
                         if group is None or session_key not in group.members:
