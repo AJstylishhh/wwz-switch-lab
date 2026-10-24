@@ -171,6 +171,48 @@ class ClientSessionIdentityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ClientSessionIndex(**kwargs)
 
+    def test_real_http_acl_token_disambiguates_two_clients_behind_same_ip(self):
+        # The physical Switches supplied this exact header in Oct 24 trace.
+        # Exercise the real HTTP handler, not just a simulated header dict.
+        conf = json.loads((ROOT / "routes.heartbeat-versions9.example.json").read_text())
+        conf = with_probe_routes(modify_routes(add_probe_routes(conf)))
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "routes.json"
+            path.write_text(json.dumps(conf))
+            routes = read_routes(path)
+        app = App(routes, lobby_mvp=True, lobby_session_ids=True)
+        a, b = identity(81), identity(82)
+        network = app.source_key("127.0.0.1")
+        for who in (a, b):
+            session, _ = app.lobby_sessions.attach(network, who)
+            app.lobby_registry.attach(session, who)
+        server = Server(("127.0.0.1", 0), make_handler(app))
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            def send(token):
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port,
+                                                  timeout=3)
+                try:
+                    conn.request("POST", START, body=match_request("public-mode"),
+                                 headers={"acl-token": token})
+                    response = conn.getresponse()
+                    return response.status, response.read()
+                finally:
+                    conn.close()
+            self.assertEqual((200, bytes((8, 0))), send(a.access))
+            self.assertEqual((200, bytes((8, 0))), send(b.access))
+            self.assertEqual(1, len(app.lobby_registry.groups))
+            group = next(iter(app.lobby_registry.groups.values()))
+            self.assertEqual(2, len(group.members))
+            self.assertEqual(set(app.lobby_sessions.sessions), set(group.members))
+            self.assertEqual((409, b"Ambiguous lab session"),
+                             send("not-issued-by-this-backend"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=3)
+
     def test_real_http_handler_handles_issued_header_and_rejects_ambiguity(self):
         conf = json.loads((ROOT / "routes.heartbeat-versions9.example.json").read_text())
         conf = with_probe_routes(modify_routes(add_probe_routes(conf)))
