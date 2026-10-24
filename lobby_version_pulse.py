@@ -10,6 +10,28 @@ the nine-value application loop. Slots 3, 5, 7, 8 are left unchanged.
 """
 from __future__ import annotations
 
+from wwz_wire import fields
+
+
+def client_reported_versions(raw):
+    """Parse only field-5 UserVersions in a Heartbeat.Update request.
+
+    No headers, properties or user-identifying payloads are retained or
+    logged. A malformed / omitted list returns None for diagnostics.
+    This helper never controls authorization or the wire response.
+    """
+    try:
+        root = list(fields(raw))
+        versions = [v for n, w, v in root if (n, w) == (5, 2)]
+        if len(versions) != 1:
+            return None
+        entries = list(fields(versions[0]))
+        if len(entries) > 20 or any((n, w) != (1, 0) for n, w, _ in entries):
+            return None
+        return tuple(value for _, _, value in entries)
+    except (ValueError, IndexError, TypeError):
+        return None
+
 VERSION_COUNT = 9
 EXPERIMENTAL_SLOTS = (0, 1, 2, 4, 6)
 MAX_REVISION = 1024
