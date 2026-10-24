@@ -30,7 +30,7 @@ from request_shape import (unknown_request_summary, REDLYNX_ENVIRONMENT,
 from post_match_user_probe import classify_lookup
 from public_user_data import public_user_data_reply
 from lobby_version_pulse import pulse_versions, client_reported_versions, EXPERIMENTAL_SLOTS, VERSION_COUNT
-from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
+from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS, matchmake_playlist
 from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
 LOG = logging.getLogger("wwz.mvp")
@@ -132,7 +132,8 @@ class App:
                  trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
                  trace_header_names=False, trace_acl_match=False,
                  trace_post_match_users=False, experimental_public_user_data=False,
-                 lobby_version_pulse=False):
+                 lobby_version_pulse=False, public_lobby_discovery=False,
+                 trace_playlist_labels=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -156,6 +157,12 @@ class App:
         if lobby_version_pulse and not (lobby_mvp and lobby_session_ids):
             raise ValueError("lobby_version_pulse requires --lobby-mvp and --lobby-session-ids")
         self.lobby_version_pulse = lobby_version_pulse
+        if public_lobby_discovery and not (lobby_mvp and lobby_session_ids):
+            raise ValueError("public_lobby_discovery requires --lobby-mvp and --lobby-session-ids")
+        if trace_playlist_labels and not lobby_mvp:
+            raise ValueError("trace_playlist_labels requires --lobby-mvp")
+        self.public_lobby_discovery = public_lobby_discovery
+        self.trace_playlist_labels = trace_playlist_labels
         self._pulse_seen = set()
         self._pulse_lock = threading.Lock()
         self._acl_probe_seen = set()
@@ -474,7 +481,18 @@ def make_handler(app):
                     else:
                         session_key = source_key
                     payload, info = app.lobby_registry.respond(
-                        session_key, path, raw)
+                        session_key, path, raw,
+                        public_discovery=app.public_lobby_discovery)
+                    # Playlist identifiers name the matchmaking category,
+                    # not account credentials. Log only bounded safe ASCII
+                    # identifiers if explicitly requested by the lab operator.
+                    if (info is not None and app.trace_playlist_labels and
+                            LOBBY_HANDLERS[path] == "start"):
+                        name = matchmake_playlist(raw)
+                        if re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", name):
+                            info["playlist_label"] = name
+                        else:
+                            info["playlist_label"] = "<noncanonical>"
                 except (ValueError, UnicodeDecodeError) as exc:
                     LOG.warning("Experimental lobby request rejected on %s: %s",
                                 path, exc)
@@ -538,6 +556,10 @@ def main():
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--trace-header-names", action="store_true",
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
+    ap.add_argument("--public-lobby-discovery", action="store_true",
+                    help="opt-in typed squad and queue status in Start/Stop/setter replies; no cross-mode matching or gameplay")
+    ap.add_argument("--trace-playlist-labels", action="store_true",
+                    help="log only bounded safe ASCII matchmaking playlist identifiers to distinguish modes")
     ap.add_argument("--lobby-version-pulse", action="store_true",
                     help="experimental: pulse select nine-entry heartbeat version slots after verified shared-roster changes")
     ap.add_argument("--experimental-public-user-data", action="store_true",
@@ -566,7 +588,9 @@ def main():
               trace_acl_match=args.trace_acl_match,
               trace_post_match_users=args.trace_post_match_users,
               experimental_public_user_data=args.experimental_public_user_data,
-              lobby_version_pulse=args.lobby_version_pulse)
+              lobby_version_pulse=args.lobby_version_pulse,
+              public_lobby_discovery=args.public_lobby_discovery,
+              trace_playlist_labels=args.trace_playlist_labels)
     servers = []
     try:
         for port in ports:
