@@ -26,6 +26,27 @@ CREDENTIAL_HEADERS = (
 MAX_SESSIONS = 256
 
 
+def candidate_header_names(headers):
+    """Authorization-like *names only*, bounded and sanitized; never values.
+
+    Server logging should use this only for a selected small set of game RPCs.
+    This may discover unrecognized SDK token-header names in a real Switch.
+    """
+    names = []
+    for raw_name in headers:
+        if not isinstance(raw_name, str):
+            continue
+        name = raw_name.lower()
+        if (3 <= len(name) <= 48 and
+                all(c.isascii() and (c.isalnum() or c == "-") for c in name) and
+                any(key in name for key in
+                    ("auth", "token", "session", "client", "user", "cookie", "ticket"))):
+            names.append(name)
+        if len(names) >= 16:
+            break
+    return sorted(set(names))
+
+
 class UnresolvedClient(ValueError):
     """Zero or several candidate sessions, or unrecognized bearer token."""
 
