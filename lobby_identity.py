@@ -22,6 +22,9 @@ CREDENTIAL_HEADERS = (
     "X-Auth-Token",
     "X-Access-Token",
     "X-Authorization",
+    # Confirmed by Oct 24 hardware/Citron HTTP header-NAME-only trace.
+    # This is trusted ONLY when it matches a token our SignInResult issued.
+    "Acl-Token",
 )
 MAX_SESSIONS = 256
 
