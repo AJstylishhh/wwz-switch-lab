@@ -75,7 +75,7 @@ class LobbyMatchingDiagnosticsTests(unittest.TestCase):
         self.reg.respond("A", START, match_request("same-mode"))
         reply, stopped = self.reg.respond(
             "A", next(p for p, v in HANDLERS.items() if v == "stop"), b"")
-        self.assertEqual(b"\\x08\\x00", reply)
+        self.assertEqual(bytes((8, 0)), reply)
         self.assertEqual("client_called_stop", stopped["decision"])
         self.assertTrue(stopped["previously_queued"])
         self.assertFalse(stopped["queued"])
