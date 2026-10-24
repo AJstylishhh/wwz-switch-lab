@@ -475,6 +475,11 @@ def make_handler(app):
                         except UnresolvedClient as exc:
                             LOG.warning("Cannot assign lobby RPC to a signed-in user: %s", exc)
                             return self.reply(409, b"Ambiguous lab session", "text/plain")
+                        if (app.public_lobby_discovery and
+                                session_info["identity_resolution"] != "issued_token"):
+                            LOG.warning("Public-lobby experiment requires a locally issued client credential")
+                            return self.reply(409, b"Authenticated lab session required",
+                                              "text/plain")
                         # Only show resolution details when a method could
                         # actually change/create lobby state, or when a token
                         # disambiguates different clients behind the same NAT.
