@@ -133,13 +133,30 @@ class LobbyRegistry:
         with self.lock:
             if not isinstance(source, str) or not source:
                 raise ValueError("missing source")
+            self._expire()
             previous = self.identities.get(source)
-            if previous is not None and previous.user_guid != identity.user_guid:
+            replaced = (previous is not None and
+                        previous.user_guid != identity.user_guid)
+            old_group = self._group(source)
+            info = {
+                "stage": "lobby_mvp_identity_attach",
+                "source_replaced": replaced,
+                "had_previous_lobby": old_group is not None,
+                "previous_queue_active": bool(old_group and old_group.queued),
+                "previous_lobby_members": len(old_group.members) if old_group else 0,
+            }
+            if replaced:
+                # Source is currently the IP-based key, NOT an authenticated
+                # session identifier. A second game instance behind the same
+                # NAT may invalidate this mapping. Surface the event rather
+                # than pretending identity correlation is reliable.
                 self._leave(source)
                 self._scalar_observations.pop(source, None)
             if source not in self.identities and len(self.identities) >= MAX_SOURCES:
                 raise ValueError("too many client sources")
             self.identities[source] = identity
+            info["group_count_after"] = len(self.groups)
+            return info
 
     def _require(self, source):
         if source not in self.identities:
@@ -294,6 +311,8 @@ class LobbyRegistry:
             elif kind == "stop":
                 if raw:
                     raise ValueError("MatchmakeStop should have no fields")
+                details["previously_queued"] = bool(group and group.queued)
+                details["decision"] = "client_called_stop"
                 if group is not None:
                     group.queued = False
                     self._touch(group)
