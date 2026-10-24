@@ -55,6 +55,34 @@ class LobbyMatchingDiagnosticsTests(unittest.TestCase):
         self.assertEqual(0, b["same_playlist_open_seats"])
         self.assertEqual(2, b["group_count"])
 
+    def test_same_network_source_new_login_reports_destroyed_waiting_queue(self):
+        first = self.reg.respond("A", START, match_request("same-mode"))[1]
+        self.assertEqual("no_other_queue", first["decision"])
+        attach = self.reg.attach(
+            "A", SimpleNamespace(user_guid=UUID(int=44)))
+        self.assertEqual("lobby_mvp_identity_attach", attach["stage"])
+        self.assertTrue(attach["source_replaced"])
+        self.assertTrue(attach["had_previous_lobby"])
+        self.assertTrue(attach["previous_queue_active"])
+        self.assertEqual(1, attach["previous_lobby_members"])
+        self.assertEqual(0, attach["group_count_after"])
+        self.assertFalse(self.reg.groups)
+        # No reset for a repeated Dequeue mapped to exactly the same identity.
+        again = self.reg.attach("A", SimpleNamespace(user_guid=UUID(int=44)))
+        self.assertFalse(again["source_replaced"])
+
+    def test_stop_records_whether_client_was_queued(self):
+        self.reg.respond("A", START, match_request("same-mode"))
+        reply, stopped = self.reg.respond(
+            "A", next(p for p, v in HANDLERS.items() if v == "stop"), b"")
+        self.assertEqual(b"\\x08\\x00", reply)
+        self.assertEqual("client_called_stop", stopped["decision"])
+        self.assertTrue(stopped["previously_queued"])
+        self.assertFalse(stopped["queued"])
+        _, again = self.reg.respond(
+            "A", next(p for p, v in HANDLERS.items() if v == "stop"), b"")
+        self.assertFalse(again["previously_queued"])
+
     def test_ambiguous_scalar_request_never_changes_reply_wire_or_lobby_state(self):
         for i in range(1, 42):
             result, details = self.reg.respond("A", OBSERVED, scalar(1, 2))
