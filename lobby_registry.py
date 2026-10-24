@@ -94,6 +94,9 @@ class Lobby:
     invites_state: int = 0
     queued: bool = False
     version: int = 1
+    # Incremented only when a participant joins or leaves. Unlike version,
+    # this ignores noisy GameData and invite updates from the game loop.
+    roster_revision: int = 0
 
 
 class LobbyRegistry:
@@ -193,6 +196,7 @@ class LobbyRegistry:
         else:
             if group.owner == source:
                 group.owner = group.members[0]
+            group.roster_revision += 1
             self._touch(group)
 
     def _detach_to_solo(self, source, group):
@@ -228,6 +232,7 @@ class LobbyRegistry:
         if source not in group.members:
             group.members.append(source)
             self.member_group[source] = group.lid
+            group.roster_revision += 1
             self._touch(group)
 
     def _squad(self, source, group) -> bytes:
