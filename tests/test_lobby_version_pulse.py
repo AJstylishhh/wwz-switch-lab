@@ -7,7 +7,7 @@ import unittest
 from uuid import UUID
 
 from lobby_registry import HANDLERS
-from lobby_version_pulse import EXPERIMENTAL_SLOTS, pulse_versions
+from lobby_version_pulse import EXPERIMENTAL_SLOTS, pulse_versions, client_reported_versions
 from mvp_server import App, Server, make_handler, read_routes
 from post_login_wire import HEARTBEAT_UPDATE
 from wwz_wire import blob, fields, scalar, string
@@ -51,6 +51,28 @@ class LobbyVersionPulseTests(unittest.TestCase):
             app.lobby_registry.attach(sid, who)
             ids[who.user_guid] = sid
         return app, (a, b, c), ids
+
+    def test_client_heartbeat_version_vector_is_parsed_without_other_data(self):
+        raw = (string(1, "fake-build") + scalar(2, 1) +
+               blob(5, b"".join(scalar(1, v) for v in BASE)))
+        self.assertEqual(tuple(BASE), client_reported_versions(raw))
+        self.assertIsNone(client_reported_versions(string(1, "fake-build")))
+        self.assertIsNone(client_reported_versions(blob(5, string(3, "bad"))))
+
+    def test_pulse_ack_transition_logged_once_per_session(self):
+        app, (a, b, _), ids = self.setup_app()
+        app.lobby_registry.respond(ids[a.user_guid], START, playlist("campaign"))
+        app.lobby_registry.respond(ids[b.user_guid], START, playlist("campaign"))
+        before = blob(5, b"".join(scalar(1, v) for v in BASE))
+        after = blob(5, b"".join(scalar(1, v) for v in pulse_versions(BASE, 1)))
+        with self.assertLogs("wwz.mvp", level="INFO") as captured:
+            app.heartbeat_versions_for("127.0.0.1", {"Acl-Token": a.access}, BASE, before)
+            app.heartbeat_versions_for("127.0.0.1", {"Acl-Token": a.access}, BASE, before)
+            app.heartbeat_versions_for("127.0.0.1", {"Acl-Token": a.access}, BASE, after)
+            app.heartbeat_versions_for("127.0.0.1", {"Acl-Token": a.access}, BASE, after)
+        self.assertEqual(2, len(captured.output))
+        self.assertIn("'client_reports_baseline': True", captured.output[0])
+        self.assertIn("'client_reports_pulsed': True", captured.output[1])
 
     def test_nine_entry_shape_and_no_mutation(self):
         self.assertEqual(tuple(BASE), pulse_versions(BASE, 0))
