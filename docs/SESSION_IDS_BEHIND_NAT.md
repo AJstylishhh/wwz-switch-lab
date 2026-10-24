@@ -44,8 +44,24 @@ PYTHONUNBUFFERED=1 python3 mvp_server.py \
 
 Test on **one physical Switch first**, then two unrelated external IPs. For a Citron + Switch same-NAT test, if the clients don't send an issued token the expected behavior is `409`; stop, revert by omitting `--lobby-session-ids`, and research their request headers. This option is not required for the already working two-*different-IP* server match experiment.
 
-## Planned next protocol investigation
+## Safest next step: inspect possible token header names without changing routing
 
-Discover the actual backend SDK authentication transport. Inspect and safely log **header names only** for incoming known Presence RPCs, no values or packet bodies, then inspect the game binary's request construction if headers remain empty. Alternatively identify a validated per-request session identifier through the binary / client callback. Do not treat HTTP source port, static public IP, arbitrary client-provided UUID or TLS SNI hostname as a verified player identity.
+A separate **non-invasive** `--trace-header-names` flag is now available. It logs only bounded, sanitized authorization-like **header names** on the first request from each network source to Dequeue, MatchmakeStart, GetStatusSquad and GetStatusMatchmake. It never logs header values or the user IDs. It can be enabled on the existing working `--lobby-mvp` server **without** `--lobby-session-ids`:
+
+```bash
+cd /opt/wwz-switch-lab
+git pull --ff-only
+PYTHONUNBUFFERED=1 python3 mvp_server.py \
+  --host 0.0.0.0 --ports 11701,11702,11704 \
+  --routes routes.remote.local.json \
+  --cert certs/server.crt --key certs/server.key \
+  --lobby-mvp --trace-clients --trace-header-names \
+  2>&1 | tee "logs/identity-header-names-$(date +%Y%m%d-%H%M%S).log" \
+  | grep --line-buffered -E 'Potential auth header names:|Experimental lobby registry:|Unmapped RPC:|ERROR'
+```
+
+Inspect `Potential auth header names:` on the Dequeue and MatchmakeStart paths. If there is a plausible stable auth header, confirm its value actually equals one of the *issued* local SignIn tokens in code before enabling per-session routing; don't assume a similarly named third-party header is legitimate. If there are no candidate headers, inspect the native request-construction code or use a verified connection/session binding. This new flag does **not** claim to fix same-NAT identity by itself.
+
+Do not treat HTTP source port, static public IP, arbitrary client-provided UUID or TLS SNI hostname as a verified player identity.
 
 Tests validate same-NAT distinct sessions, token-based routing to separate lobby records, invalid credentials, unique-IP fallback, expiry, repeated Dequeue and a real loopback HTTP endpoint. No hardware verification of this flag is claimed.
