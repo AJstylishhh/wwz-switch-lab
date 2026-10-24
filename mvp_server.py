@@ -27,6 +27,7 @@ from auth_dequeue import DEQUEUE_ROUTE, AuthSessions, parse_dequeue
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
 from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
+from lobby_identity import ClientSessionIndex, UnresolvedClient
 
 LOG = logging.getLogger("wwz.mvp")
 GUID_ROUTE = re.compile(r"^/[0-9a-f]{32}\.svc/[0-9a-f]{32}$", re.I)
@@ -124,7 +125,7 @@ def read_routes(config_path: Path):
 
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
-                 trace_clients=False, lobby_mvp=False):
+                 trace_clients=False, lobby_mvp=False, lobby_session_ids=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -135,6 +136,10 @@ class App:
         self.post_login = PostLogin(self.auth_sessions)
         # Explicit opt-in. Default route table remains unchanged.
         self.lobby_registry = LobbyRegistry() if lobby_mvp else None
+        if lobby_session_ids and not lobby_mvp:
+            raise ValueError("lobby_session_ids requires lobby_mvp")
+        # Optional session-safe routing: one public IP may have many logins.
+        self.lobby_sessions = ClientSessionIndex() if lobby_session_ids else None
         if capture_dir is not None:
             capture_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
@@ -264,8 +269,14 @@ def make_handler(app):
                     with app.auth_sessions.lock:
                         identity = app.auth_sessions.identities[token]
                     try:
-                        attachment = app.lobby_registry.attach(
-                            app.source_key(self.client_address[0]), identity)
+                        source_key = app.source_key(self.client_address[0])
+                        if app.lobby_sessions is not None:
+                            session_key, session_info = app.lobby_sessions.attach(
+                                source_key, identity)
+                            LOG.info("Experimental lobby identity: %s", session_info)
+                        else:
+                            session_key = source_key
+                        attachment = app.lobby_registry.attach(session_key, identity)
                         LOG.info("Experimental lobby registry: %s", attachment)
                     except ValueError as exc:
                         LOG.warning("Lobby user correlation rejected: %s", exc)
@@ -285,8 +296,24 @@ def make_handler(app):
                 return self.reply(answer[0], data)
             if app.lobby_registry is not None and path in LOBBY_HANDLERS:
                 try:
+                    source_key = app.source_key(self.client_address[0])
+                    if app.lobby_sessions is not None:
+                        try:
+                            session_key, session_info = app.lobby_sessions.resolve(
+                                source_key, self.headers)
+                        except UnresolvedClient as exc:
+                            LOG.warning("Cannot assign lobby RPC to a signed-in user: %s", exc)
+                            return self.reply(409, b"Ambiguous lab session", "text/plain")
+                        # Only show resolution details when a method could
+                        # actually change/create lobby state, or when a token
+                        # disambiguates different clients behind the same NAT.
+                        if (session_info["identity_resolution"] == "issued_token" or
+                                session_info["same_network_source_sessions"] > 1):
+                            LOG.info("Experimental lobby identity: %s", session_info)
+                    else:
+                        session_key = source_key
                     payload, info = app.lobby_registry.respond(
-                        app.source_key(self.client_address[0]), path, raw)
+                        session_key, path, raw)
                 except (ValueError, UnicodeDecodeError) as exc:
                     LOG.warning("Experimental lobby request rejected on %s: %s",
                                 path, exc)
@@ -346,6 +373,8 @@ def main():
                     help="log ephemeral HMAC tags for source IP / known auth headers; never values")
     ap.add_argument("--lobby-mvp", action="store_true",
                     help="opt-in in-memory playlist matching and typed squad/queue status; no gameplay")
+    ap.add_argument("--lobby-session-ids", action="store_true",
+                    help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
     ap.add_argument("--key", type=Path, default=Path(__file__).parent / "certs" / "server.key")
     ap.add_argument("--max-body", type=int, default=2_000_000)
@@ -360,7 +389,8 @@ def main():
     if not ports or len(set(ports)) != len(ports):
         ap.error("ports must be distinct")
     app = App(read_routes(args.routes), args.capture_dir, args.max_body,
-              trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp)
+              trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp,
+              lobby_session_ids=args.lobby_session_ids)
     servers = []
     try:
         for port in ports:
