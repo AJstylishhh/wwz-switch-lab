@@ -55,6 +55,15 @@ def presence_reply(kind: str, response: bytes) -> bytes:
     return SUCCESS + blob(TYPE_FIELD, blob(1, blob(field_number, response)))
 
 
+def public_lobby_presence_reply(squad: bytes, matchmake: bytes) -> bytes:
+    """A single descriptor-typed PresenceStatusResponse with both statuses.
+
+    This is a lab candidate for Start: schemas confirm the envelope and field
+    numbers, but method-to-GUID assignment and client acceptance are inferred.
+    """
+    return SUCCESS + blob(TYPE_FIELD, blob(1, blob(2, squad) + blob(3, matchmake)))
+
+
 def single_field(raw: bytes, expected_field: int, wire: int):
     entries = list(fields(raw))
     if len(entries) != 1 or entries[0][:2] != (expected_field, wire):
@@ -268,7 +277,7 @@ class LobbyRegistry:
             status += scalar(10, self._size(group))
         return scalar(1, group.version if group else 0) + blob(4, status)
 
-    def respond(self, source: str, path: str, raw: bytes):
+    def respond(self, source: str, path: str, raw: bytes, *, public_discovery=False):
         kind = HANDLERS.get(path)
         if kind is None:
             raise ValueError("unknown lobby handler")
@@ -385,6 +394,22 @@ class LobbyRegistry:
                 if any(n != 1 or w != 0 for n, w, _ in fields(raw)):
                     raise ValueError("invalid GetStatusMatchmake request")
                 return presence_reply("matchmake", self._matchmake(source, group)), self._summary(kind, group)
+            # A generic Success acknowledgement does not deliver the new
+            # client-visible squad/queue state. The game descriptor associates
+            # the Start family with a PresenceStatusResponse. Keep this opt-in:
+            # the candidate GUID association has not been proven by observing
+            # official decrypted traffic.
+            if public_discovery and kind in ("start", "stop") and group is not None:
+                details["typed_status_response"] = "squad_and_matchmake"
+                details["lobby_visibility"] = ("matching_queue_only"
+                                               if group.queued else "not_queued")
+                return (public_lobby_presence_reply(self._squad(source, group),
+                                                    self._matchmake(source, group)),
+                        {**self._summary(kind, group), **details})
+            if public_discovery and kind in ("settings", "game_data", "invites") and group is not None:
+                details["typed_status_response"] = "squad"
+                return (presence_reply("squad", self._squad(source, group)),
+                        {**self._summary(kind, group), **details})
             return SUCCESS, {**self._summary(kind, group), **details}
 
     def _summary(self, kind, group):
