@@ -25,7 +25,9 @@ from wwz_wire import ENVIRONMENT_ROUTE, environment_result, describe_environment
 from queue_state import ENQUEUE_ROUTE, QueueState, inspect_enqueue
 from auth_dequeue import DEQUEUE_ROUTE, AuthSessions, parse_dequeue
 from post_login import ROUTES as POST_LOGIN_ROUTES, PostLogin
-from request_shape import unknown_request_summary, REDLYNX_ENVIRONMENT
+from request_shape import (unknown_request_summary, REDLYNX_ENVIRONMENT,
+                           POST_MATCH_USER_LOOKUP_CANDIDATE)
+from post_match_user_probe import classify_lookup
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
 from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
@@ -126,7 +128,8 @@ def read_routes(config_path: Path):
 class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
                  trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
-                 trace_header_names=False, trace_acl_match=False):
+                 trace_header_names=False, trace_acl_match=False,
+                 trace_post_match_users=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -143,6 +146,7 @@ class App:
         self.lobby_sessions = ClientSessionIndex() if lobby_session_ids else None
         self.trace_header_names = trace_header_names
         self.trace_acl_match = trace_acl_match
+        self.trace_post_match_users = trace_post_match_users
         self._acl_probe_seen = set()
         self._header_probe_seen = set()
         self._header_probe_lock = threading.Lock()
@@ -302,6 +306,15 @@ def make_handler(app):
                 return self.reply(404, b"Invalid RPC path", "text/plain")
             answer = app.routes.get(path)
             if answer is None:
+                if app.trace_post_match_users and path == POST_MATCH_USER_LOOKUP_CANDIDATE:
+                    # Read-only correlation. Only active locally issued identities
+                    # are consulted; never log UUIDs, credentials or raw bodies.
+                    with app.auth_sessions.lock:
+                        app.auth_sessions._prune_locked(app.auth_sessions.clock())
+                        identities = tuple(app.auth_sessions.identities.values())
+                    report = classify_lookup(
+                        raw, identities, get_header(self.headers, "Acl-Token"))
+                    LOG.info("Post-match user lookup correlation: %s", report)
                 summary = unknown_request_summary(path, raw)
                 if summary is not None:
                     LOG.info("Unimplemented RPC request shape: %s %s", path, summary)
@@ -436,6 +449,8 @@ def main():
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--trace-header-names", action="store_true",
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
+    ap.add_argument("--trace-post-match-users", action="store_true",
+                    help="read-only post-match UserId versus locally issued UserId match counts; responses unchanged")
     ap.add_argument("--trace-acl-match", action="store_true",
                     help="diagnose whether observed acl-token matches server-issued tokens; keyed ephemeral tag only, no values; responses unchanged")
     ap.add_argument("--cert", type=Path, default=Path(__file__).parent / "certs" / "server.crt")
@@ -455,7 +470,8 @@ def main():
               trace_clients=args.trace_clients, lobby_mvp=args.lobby_mvp,
               lobby_session_ids=args.lobby_session_ids,
               trace_header_names=args.trace_header_names,
-              trace_acl_match=args.trace_acl_match)
+              trace_acl_match=args.trace_acl_match,
+              trace_post_match_users=args.trace_post_match_users)
     servers = []
     try:
         for port in ports:
