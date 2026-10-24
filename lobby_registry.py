@@ -195,6 +195,25 @@ class LobbyRegistry:
                 group.owner = group.members[0]
             self._touch(group)
 
+    def _detach_to_solo(self, source, group):
+        """Detach one participant without cancelling another player's search.
+
+        Our lab currently conflates squad and matchmaking membership. This
+        conservative approximation preserves the existing independent queue,
+        never carries another member into a newly requested playlist, and
+        does not fabricate a new game-session assignment.
+        """
+        if group is None or len(group.members) <= 1:
+            return group
+        settings, invites = group.settings, group.invites_state
+        self._leave(source)
+        solo = self._group(source, create=True)
+        # Keep only generic squad configuration, not old owner's GameData.
+        solo.settings = settings
+        solo.invites_state = invites
+        self._touch(solo)
+        return solo
+
     def _size(self, group):
         if not group.settings:
             return MAX_PLAYERS
@@ -280,6 +299,17 @@ class LobbyRegistry:
                 self._touch(group)
             elif kind == "start":
                 playlist = matchmake_playlist(raw)
+                # A member choosing a different playlist must not silently
+                # drag every other member of the old queue into that search.
+                # Likewise an inactive shared party is not proof that every
+                # participant agreed to restart matchmaking.
+                if group is not None and len(group.members) > 1 and (
+                    not group.queued or group.playlist != playlist
+                ):
+                    group = self._detach_to_solo(source, group)
+                    details["detached_for_new_search"] = True
+                else:
+                    details["detached_for_new_search"] = False
                 # Join only a *queued* lobby with the same playlist. A squad
                 # left in the local UI is not automatically public.
                 others = [g for g in self.groups.values()
@@ -288,13 +318,13 @@ class LobbyRegistry:
                 available = [g for g in compatible if len(g.members) < self._size(g)]
                 candidate = min(available, key=lambda g: (g.created, g.lid.int),
                                 default=None)
-                details = {
+                details.update({
                     "playlist_tag": self._playlist_tag(playlist),
                     "playlist_bytes": len(playlist.encode("utf-8")),
                     "other_queued_groups": len(others),
                     "same_playlist_groups": len(compatible),
                     "same_playlist_open_seats": len(available),
-                }
+                })
                 if candidate:
                     self._join_queue(source, candidate)
                     group = candidate
@@ -320,8 +350,14 @@ class LobbyRegistry:
                 details["previously_queued"] = bool(group and group.queued)
                 details["decision"] = "client_called_stop"
                 if group is not None:
-                    group.queued = False
-                    self._touch(group)
+                    if len(group.members) > 1:
+                        group = self._detach_to_solo(source, group)
+                        details["detached_from_shared_queue"] = True
+                    else:
+                        details["detached_from_shared_queue"] = False
+                    if group.queued:
+                        group.queued = False
+                        self._touch(group)
             elif kind == "observed_scalar":
                 # A two-byte repeating scalar method was seen during matchmaking.
                 # Track shape only; never claim it is a known SDK method.
