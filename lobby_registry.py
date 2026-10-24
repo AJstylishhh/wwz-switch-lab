@@ -7,6 +7,9 @@ Never retain login tokens, raw IPs, or actual traffic on disk.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import hmac
+import secrets
 import threading
 import time
 from uuid import UUID, uuid4
@@ -24,6 +27,8 @@ HANDLERS = {
     PREFIX + "f9dcd75c457145e7a8b4d5e619171fc1": "stop",
     PREFIX + "44106e2a072d4667999b814b3207e195": "squad_status",
     PREFIX + "2896c4aa256e4e7290454ef6df3f1ce9": "match_status",
+    # Observed 47x during matchmaking. Method name is NOT proven.
+    PREFIX + "b2ba5509c32e43f09b39cb0a828059df": "observed_scalar",
 }
 SUCCESS = scalar(1, 0)
 MAX_PLAYERS = 4
@@ -106,6 +111,14 @@ class LobbyRegistry:
         self.identities = {}    # pseudonymous source -> synthetic SignIn Identity
         self.groups = {}        # random UUID -> Lobby
         self.member_group = {}  # source -> lobby UUID
+        # Random, process-scoped key prevents offline guessing of short playlist
+        # strings from their diagnostic tags. Never log the key or raw playlist.
+        self._diagnostic_key = secrets.token_bytes(32)
+        self._scalar_observations = {}  # source -> (last numeric value, count)
+
+    def _playlist_tag(self, playlist):
+        return hmac.digest(self._diagnostic_key, playlist.encode("utf-8"),
+                           hashlib.sha256)[:6].hex()
 
     def _expire(self):
         now = self.clock()
@@ -123,6 +136,7 @@ class LobbyRegistry:
             previous = self.identities.get(source)
             if previous is not None and previous.user_guid != identity.user_guid:
                 self._leave(source)
+                self._scalar_observations.pop(source, None)
             if source not in self.identities and len(self.identities) >= MAX_SOURCES:
                 raise ValueError("too many client sources")
             self.identities[source] = identity
@@ -223,6 +237,7 @@ class LobbyRegistry:
             self._expire()
             self._require(source)
             group = self._group(source)
+            details = {}
             if kind == "settings":
                 value = single_field(raw, 1, 2)
                 if len(value) > 128:
@@ -231,6 +246,7 @@ class LobbyRegistry:
                 group = group or self._group(source, create=True)
                 group.settings = value
                 self._touch(group)
+                details["max_count"] = self._size(group)
             elif kind == "game_data":
                 value = single_field(raw, 1, 2)
                 if len(value) > 2048:
@@ -249,26 +265,50 @@ class LobbyRegistry:
                 playlist = matchmake_playlist(raw)
                 # Join only a *queued* lobby with the same playlist. A squad
                 # left in the local UI is not automatically public.
-                candidate = next((
-                    g for g in sorted(self.groups.values(),
-                                      key=lambda g: (g.created, g.lid.int))
-                    if g.queued and g.playlist == playlist and
-                    source not in g.members and len(g.members) < self._size(g)
-                ), None)
+                others = [g for g in self.groups.values()
+                          if g.queued and source not in g.members]
+                compatible = [g for g in others if g.playlist == playlist]
+                available = [g for g in compatible if len(g.members) < self._size(g)]
+                candidate = min(available, key=lambda g: (g.created, g.lid.int),
+                                default=None)
+                details = {
+                    "playlist_tag": self._playlist_tag(playlist),
+                    "playlist_bytes": len(playlist.encode("utf-8")),
+                    "other_queued_groups": len(others),
+                    "same_playlist_groups": len(compatible),
+                    "same_playlist_open_seats": len(available),
+                }
                 if candidate:
                     self._join_queue(source, candidate)
                     group = candidate
+                    details["decision"] = "joined_existing_queue"
                 else:
                     group = group or self._group(source, create=True)
                     group.playlist = playlist
                     group.queued = True
                     self._touch(group)
+                    details["decision"] = ("no_other_queue" if not others else
+                                           "playlist_differs" if not compatible else
+                                           "matching_queue_full")
+                details["max_count"] = self._size(group)
             elif kind == "stop":
                 if raw:
                     raise ValueError("MatchmakeStop should have no fields")
                 if group is not None:
                     group.queued = False
                     self._touch(group)
+            elif kind == "observed_scalar":
+                # A two-byte repeating scalar method was seen during matchmaking.
+                # Track shape only; never claim it is a known SDK method.
+                value = single_field(raw, 1, 0)
+                previous, count = self._scalar_observations.get(source, (None, 0))
+                count += 1
+                self._scalar_observations[source] = value, count
+                if previous != value or count % 20 == 0:
+                    details = {"observed_value": value, "observation_count": count,
+                               "changed": previous is not None and previous != value}
+                else:
+                    return SUCCESS, None
             elif kind == "squad_status":
                 if any(n not in (1, 2) or w != 0 for n, w, _ in fields(raw)):
                     raise ValueError("invalid GetStatusSquad request")
@@ -279,7 +319,7 @@ class LobbyRegistry:
                 if any(n != 1 or w != 0 for n, w, _ in fields(raw)):
                     raise ValueError("invalid GetStatusMatchmake request")
                 return presence_reply("matchmake", self._matchmake(source, group)), self._summary(kind, group)
-            return SUCCESS, self._summary(kind, group)
+            return SUCCESS, {**self._summary(kind, group), **details}
 
     def _summary(self, kind, group):
         return {"stage": "lobby_mvp_" + kind,
