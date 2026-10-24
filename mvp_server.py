@@ -290,7 +290,8 @@ def make_handler(app):
                     LOG.warning("Experimental lobby request rejected on %s: %s",
                                 path, exc)
                     return self.reply(400, b"Invalid experimental lobby RPC", "text/plain")
-                LOG.info("Experimental lobby registry: %s", info)
+                if info is not None:
+                    LOG.info("Experimental lobby registry: %s", info)
                 return self.reply(answer[0], payload)
             self.reply(*answer)
     return Handler
