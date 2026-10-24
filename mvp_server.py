@@ -29,7 +29,7 @@ from request_shape import (unknown_request_summary, REDLYNX_ENVIRONMENT,
                            POST_MATCH_USER_LOOKUP_CANDIDATE)
 from post_match_user_probe import classify_lookup
 from public_user_data import public_user_data_reply
-from lobby_version_pulse import pulse_versions, EXPERIMENTAL_SLOTS, VERSION_COUNT
+from lobby_version_pulse import pulse_versions, client_reported_versions, EXPERIMENTAL_SLOTS, VERSION_COUNT
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
 from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
@@ -169,7 +169,7 @@ class App:
                 pass
 
 
-    def heartbeat_versions_for(self, ip, headers, configured):
+    def heartbeat_versions_for(self, ip, headers, configured, raw=None):
         """Compute a per-session, opt-in pulse after a verified roster update.
 
         No IP-based fallback, no new payload format, and no global version
@@ -191,7 +191,12 @@ class App:
             roster_revision = group.roster_revision if group is not None else 0
         values = pulse_versions(configured, roster_revision)
         if roster_revision:
-            key = (sid, roster_revision)
+            observed = client_reported_versions(raw) if raw is not None else None
+            acknowledged = bool(observed is not None and tuple(observed) == values)
+            is_baseline = bool(observed is not None and tuple(observed) == tuple(configured))
+            # Only one sample for each ack transition per verified session.
+            key = (sid, roster_revision, acknowledged, is_baseline,
+                   len(observed) if observed is not None else -1)
             with self._pulse_lock:
                 emit = key not in self._pulse_seen
                 if emit and len(self._pulse_seen) < 4096:
@@ -202,7 +207,11 @@ class App:
                 LOG.info("Experimental heartbeat roster-version pulse: %s",
                          {"session_tag": details["session_tag"],
                           "roster_revision": roster_revision,
-                          "updated_slots_zero_based": EXPERIMENTAL_SLOTS})
+                          "updated_slots_zero_based": EXPERIMENTAL_SLOTS,
+                          "client_reported_entries": (len(observed)
+                                                      if observed is not None else None),
+                          "client_reports_baseline": is_baseline,
+                          "client_reports_pulsed": acknowledged})
         return values
 
     def source_key(self, ip):
@@ -436,7 +445,7 @@ def make_handler(app):
                     baseline_versions = answer[1].get("heartbeat_version_values")
                     if path == "/772eb3c6037845daa9ab86137203ccf2.svc/e000e353458e4062b8bf7ebe912b225d":
                         baseline_versions = app.heartbeat_versions_for(
-                            self.client_address[0], self.headers, baseline_versions)
+                            self.client_address[0], self.headers, baseline_versions, raw)
                     data, info = app.post_login.respond(
                         path, raw, datacenter_ids=answer[1].get("datacenter_ids"),
                         presence_available_seconds=answer[1].get("presence_available_seconds", 0),
