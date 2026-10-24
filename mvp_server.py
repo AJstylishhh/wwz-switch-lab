@@ -133,7 +133,7 @@ class App:
                  trace_header_names=False, trace_acl_match=False,
                  trace_post_match_users=False, experimental_public_user_data=False,
                  lobby_version_pulse=False, public_lobby_discovery=False,
-                 trace_playlist_labels=False):
+                 trace_playlist_labels=False, lab_cross_playlist_probe=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -162,6 +162,9 @@ class App:
         if trace_playlist_labels and not lobby_mvp:
             raise ValueError("trace_playlist_labels requires --lobby-mvp")
         self.public_lobby_discovery = public_lobby_discovery
+        if lab_cross_playlist_probe and not (public_lobby_discovery and lobby_session_ids):
+            raise ValueError("lab_cross_playlist_probe requires --public-lobby-discovery and --lobby-session-ids")
+        self.lab_cross_playlist_probe = lab_cross_playlist_probe
         self.trace_playlist_labels = trace_playlist_labels
         self._pulse_seen = set()
         self._pulse_lock = threading.Lock()
@@ -482,7 +485,8 @@ def make_handler(app):
                         session_key = source_key
                     payload, info = app.lobby_registry.respond(
                         session_key, path, raw,
-                        public_discovery=app.public_lobby_discovery)
+                        public_discovery=app.public_lobby_discovery,
+                        cross_playlist_probe=app.lab_cross_playlist_probe)
                     # Playlist identifiers name the matchmaking category,
                     # not account credentials. Log only bounded safe ASCII
                     # identifiers if explicitly requested by the lab operator.
@@ -558,6 +562,8 @@ def main():
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
     ap.add_argument("--public-lobby-discovery", action="store_true",
                     help="opt-in typed squad and queue status in Start/Stop/setter replies; no cross-mode matching or gameplay")
+    ap.add_argument("--lab-cross-playlist-probe", action="store_true",
+                    help="highly experimental: force one two-client pair despite different playlists; diagnoses notification, NOT compatible matchmaking")
     ap.add_argument("--trace-playlist-labels", action="store_true",
                     help="log only bounded safe ASCII matchmaking playlist identifiers to distinguish modes")
     ap.add_argument("--lobby-version-pulse", action="store_true",
@@ -590,7 +596,8 @@ def main():
               experimental_public_user_data=args.experimental_public_user_data,
               lobby_version_pulse=args.lobby_version_pulse,
               public_lobby_discovery=args.public_lobby_discovery,
-              trace_playlist_labels=args.trace_playlist_labels)
+              trace_playlist_labels=args.trace_playlist_labels,
+              lab_cross_playlist_probe=args.lab_cross_playlist_probe)
     servers = []
     try:
         for port in ports:
