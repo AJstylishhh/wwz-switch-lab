@@ -29,6 +29,7 @@ from request_shape import (unknown_request_summary, REDLYNX_ENVIRONMENT,
                            POST_MATCH_USER_LOOKUP_CANDIDATE)
 from post_match_user_probe import classify_lookup
 from public_user_data import public_user_data_reply
+from lobby_version_pulse import pulse_versions, EXPERIMENTAL_SLOTS, VERSION_COUNT
 from lobby_registry import LobbyRegistry, HANDLERS as LOBBY_HANDLERS
 from lobby_identity import ClientSessionIndex, UnresolvedClient, candidate_header_names, get_header
 
@@ -130,7 +131,8 @@ class App:
     def __init__(self, routes, capture_dir=None, max_body=2_000_000,
                  trace_clients=False, lobby_mvp=False, lobby_session_ids=False,
                  trace_header_names=False, trace_acl_match=False,
-                 trace_post_match_users=False, experimental_public_user_data=False):
+                 trace_post_match_users=False, experimental_public_user_data=False,
+                 lobby_version_pulse=False):
         self.routes, self.capture_dir, self.max_body = routes, capture_dir, max_body
         self.trace_clients = trace_clients
         # Ephemeral random key: labels do not disclose client IPs or token
@@ -151,6 +153,11 @@ class App:
         if experimental_public_user_data and not (lobby_mvp and lobby_session_ids):
             raise ValueError("experimental_public_user_data requires --lobby-mvp and --lobby-session-ids")
         self.experimental_public_user_data = experimental_public_user_data
+        if lobby_version_pulse and not (lobby_mvp and lobby_session_ids):
+            raise ValueError("lobby_version_pulse requires --lobby-mvp and --lobby-session-ids")
+        self.lobby_version_pulse = lobby_version_pulse
+        self._pulse_seen = set()
+        self._pulse_lock = threading.Lock()
         self._acl_probe_seen = set()
         self._header_probe_seen = set()
         self._header_probe_lock = threading.Lock()
@@ -161,6 +168,42 @@ class App:
             except OSError:
                 pass
 
+
+    def heartbeat_versions_for(self, ip, headers, configured):
+        """Compute a per-session, opt-in pulse after a verified roster update.
+
+        No IP-based fallback, no new payload format, and no global version
+        changes for unrelated authenticated users or unknown clients.
+        """
+        if not self.lobby_version_pulse:
+            return configured
+        if configured is None or len(configured) != VERSION_COUNT:
+            raise ValueError("heartbeat pulse requires exactly nine configured UserVersions")
+        try:
+            sid, details = self.lobby_sessions.resolve(self.source_key(ip), headers)
+            if details["identity_resolution"] != "issued_token":
+                return configured
+        except UnresolvedClient:
+            return configured
+        with self.lobby_registry.lock:
+            self.lobby_registry._expire()
+            group = self.lobby_registry._group(sid)
+            roster_revision = group.roster_revision if group is not None else 0
+        values = pulse_versions(configured, roster_revision)
+        if roster_revision:
+            key = (sid, roster_revision)
+            with self._pulse_lock:
+                emit = key not in self._pulse_seen
+                if emit and len(self._pulse_seen) < 4096:
+                    self._pulse_seen.add(key)
+                elif len(self._pulse_seen) >= 4096:
+                    emit = False
+            if emit:
+                LOG.info("Experimental heartbeat roster-version pulse: %s",
+                         {"session_tag": details["session_tag"],
+                          "roster_revision": roster_revision,
+                          "updated_slots_zero_based": EXPERIMENTAL_SLOTS})
+        return values
 
     def source_key(self, ip):
         # Stable within this process, uncorrelatable between restarts;
@@ -390,10 +433,14 @@ def make_handler(app):
                 return self.reply(answer[0], data)
             if path in POST_LOGIN_ROUTES and isinstance(answer[1], dict):
                 try:
+                    baseline_versions = answer[1].get("heartbeat_version_values")
+                    if path == "/772eb3c6037845daa9ab86137203ccf2.svc/e000e353458e4062b8bf7ebe912b225d":
+                        baseline_versions = app.heartbeat_versions_for(
+                            self.client_address[0], self.headers, baseline_versions)
                     data, info = app.post_login.respond(
                         path, raw, datacenter_ids=answer[1].get("datacenter_ids"),
                         presence_available_seconds=answer[1].get("presence_available_seconds", 0),
-                        heartbeat_version_values=answer[1].get("heartbeat_version_values"))
+                        heartbeat_version_values=baseline_versions)
                 except ValueError as exc:
                     LOG.warning("Experimental post-login request rejected on %s: %s", path, exc)
                     return self.reply(400, b"Invalid experimental RPC", "text/plain")
@@ -482,6 +529,8 @@ def main():
                     help="with --lobby-mvp, use issued SignIn user sessions rather than public IP; requires token to distinguish NAT clients")
     ap.add_argument("--trace-header-names", action="store_true",
                     help="one-time, names-only list of likely auth headers on Dequeue/Presence status/start; never values")
+    ap.add_argument("--lobby-version-pulse", action="store_true",
+                    help="experimental: pulse select nine-entry heartbeat version slots after verified shared-roster changes")
     ap.add_argument("--experimental-public-user-data", action="store_true",
                     help="with --lobby-mvp --lobby-session-ids, typed synthetic profile response for verified same-lobby users")
     ap.add_argument("--trace-post-match-users", action="store_true",
@@ -507,7 +556,8 @@ def main():
               trace_header_names=args.trace_header_names,
               trace_acl_match=args.trace_acl_match,
               trace_post_match_users=args.trace_post_match_users,
-              experimental_public_user_data=args.experimental_public_user_data)
+              experimental_public_user_data=args.experimental_public_user_data,
+              lobby_version_pulse=args.lobby_version_pulse)
     servers = []
     try:
         for port in ports:
