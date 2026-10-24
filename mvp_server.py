@@ -264,8 +264,9 @@ def make_handler(app):
                     with app.auth_sessions.lock:
                         identity = app.auth_sessions.identities[token]
                     try:
-                        app.lobby_registry.attach(
+                        attachment = app.lobby_registry.attach(
                             app.source_key(self.client_address[0]), identity)
+                        LOG.info("Experimental lobby registry: %s", attachment)
                     except ValueError as exc:
                         LOG.warning("Lobby user correlation rejected: %s", exc)
                         return self.reply(503, b"Lobby capacity reached", "text/plain")
